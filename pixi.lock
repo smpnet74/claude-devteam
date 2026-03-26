@@ -400,7 +400,7 @@ packages:
 - pypi: ./
   name: claude-devteam
   version: 0.1.0
-  sha256: 9e3335159973db6681aeac8c436173d9548f013b79b93fb2458a085609a9a42f
+  sha256: 26ff945a133288e7a570cfc103e9ab419ae9d8dc1786064ba1a2c29f8451affa
   requires_dist:
   - dbos>=2.16,<3
   - fastapi>=0.135,<1

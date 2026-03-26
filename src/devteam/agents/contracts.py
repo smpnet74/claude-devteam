@@ -44,8 +44,9 @@ class ImplementationResult(BaseModel):
 
     @model_validator(mode="after")
     def _question_required_when_blocked(self) -> ImplementationResult:
-        if self.status in ("needs_clarification", "blocked") and self.question is None:
-            raise ValueError(f"'question' is required when status is '{self.status}'")
+        if self.status in ("needs_clarification", "blocked"):
+            if self.question is None or not self.question.strip():
+                raise ValueError(f"'question' is required when status is '{self.status}'")
         return self
 
 
