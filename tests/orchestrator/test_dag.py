@@ -55,6 +55,32 @@ class TestBuildDAG:
         assert dag.dependency_graph["T-1"] == []
         assert dag.dependency_graph["T-2"] == []
 
+    def test_cyclic_dependency_raises(self) -> None:
+        """build_dag should reject graphs with cycles."""
+        t1 = TaskDecomposition.model_construct(
+            id="T-1",
+            description="Task T-1",
+            assigned_to="backend_engineer",
+            team="a",
+            depends_on=["T-2"],
+            pr_group="feat/main",
+        )
+        t2 = TaskDecomposition.model_construct(
+            id="T-2",
+            description="Task T-2",
+            assigned_to="backend_engineer",
+            team="a",
+            depends_on=["T-1"],
+            pr_group="feat/main",
+        )
+        decomp = DecompositionResult.model_construct(
+            tasks=[t1, t2],
+            peer_assignments={},
+            parallel_groups=[],
+        )
+        with pytest.raises(ValueError, match="Dependency cycle detected"):
+            build_dag(decomp)
+
     def test_unknown_dependency_raises(self) -> None:
         # Use model_construct to bypass DecompositionResult's own graph
         # validation so we can test the build_dag guard in isolation.
@@ -472,3 +498,29 @@ class TestDAGExecutor:
         assert "T-2" not in launched
         # T-3 is independent, should succeed
         assert "T-3" in result.results
+
+    def test_check_complete_exception_marks_task_failed(self) -> None:
+        """If check_complete raises, the task is marked failed without aborting the DAG."""
+
+        def launch(task: TaskDecomposition) -> str:
+            return task.id
+
+        def wait(handle: str) -> tuple[bool, object]:
+            if handle == "T-1":
+                raise ConnectionError("transport error")
+            return (True, "ok")
+
+        decomp = DecompositionResult(
+            tasks=[_make_task("T-1"), _make_task("T-2")],
+            peer_assignments={},
+            parallel_groups=[],
+        )
+        dag = build_dag(decomp)
+        executor = DAGExecutor(launch_task=launch, check_complete=wait)
+        result = executor.execute(dag)
+
+        assert not result.all_succeeded
+        assert "T-1" in result.failed_tasks
+        assert "transport error" in result.failed_tasks["T-1"]
+        # T-2 is independent and should still succeed
+        assert "T-2" in result.results

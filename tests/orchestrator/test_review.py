@@ -219,3 +219,37 @@ class TestExecutePostPRReview:
 
         assert "qa_review" in result.gate_results
         assert len(result.skipped_gates) == 0
+
+    def test_malformed_review_missing_verdict(self) -> None:
+        """Invoker returns dict without 'verdict' -- ValidationError propagates."""
+        from pydantic import ValidationError
+
+        invoker = MagicMock()
+        invoker.invoke.return_value = {"summary": "ok"}  # missing verdict
+
+        with pytest.raises(ValidationError):
+            execute_post_pr_review(WorkType.CODE, "PR context", invoker)
+
+    def test_malformed_review_invalid_verdict(self) -> None:
+        """Invoker returns dict with invalid verdict value -- ValidationError propagates."""
+        from pydantic import ValidationError
+
+        invoker = MagicMock()
+        invoker.invoke.return_value = {"verdict": "yolo", "summary": "ok", "comments": []}
+
+        with pytest.raises(ValidationError):
+            execute_post_pr_review(WorkType.CODE, "PR context", invoker)
+
+    def test_malformed_review_needs_revision_no_comments(self) -> None:
+        """needs_revision verdict without comments should fail validation."""
+        from pydantic import ValidationError
+
+        invoker = MagicMock()
+        invoker.invoke.return_value = {
+            "verdict": "needs_revision",
+            "summary": "bad code",
+            "comments": [],
+        }
+
+        with pytest.raises(ValidationError, match="requires at least one comment"):
+            execute_post_pr_review(WorkType.CODE, "PR context", invoker)

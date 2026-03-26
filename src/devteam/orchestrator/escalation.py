@@ -86,7 +86,14 @@ def attempt_resolution(
     except Exception as e:
         raise RuntimeError(f"Escalation attempt to '{level}' failed: {e}") from e
 
-    # Parse the response (agent returns dict with resolved, answer, reasoning)
+    # Validate the response is a dict with an "answer" key when resolved
+    if not isinstance(raw, dict) or "answer" not in raw:
+        return EscalationAttempt(
+            level=level,
+            resolved=False,
+            reasoning=f"Malformed response from {level}: missing 'answer' key",
+        )
+
     resolved = raw.get("resolved", False)
     return EscalationAttempt(
         level=level,

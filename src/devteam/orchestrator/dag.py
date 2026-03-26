@@ -105,6 +105,24 @@ def build_dag(decomposition: DecompositionResult) -> DAGState:
             if dep not in all_task_ids:
                 raise ValueError(f"Task {tid} depends on unknown task {dep}")
 
+    # Cycle detection via DFS
+    visited: set[str] = set()
+    in_stack: set[str] = set()
+
+    def _dfs(node: str) -> None:
+        if node in in_stack:
+            raise ValueError(f"Dependency cycle detected involving task {node}")
+        if node in visited:
+            return
+        in_stack.add(node)
+        for dep in dag.dependency_graph.get(node, []):
+            _dfs(dep)
+        in_stack.remove(node)
+        visited.add(node)
+
+    for tid in dag.dependency_graph:
+        _dfs(tid)
+
     return dag
 
 
@@ -190,7 +208,15 @@ class DAGExecutor:
                 for tid in list(dag.get_running_task_ids()):
                     if tid not in handles:
                         continue
-                    done, result_or_error = self._check_complete(handles[tid])
+                    try:
+                        done, result_or_error = self._check_complete(handles[tid])
+                    except Exception as exc:
+                        dag.mark_failed(tid, str(exc))
+                        if self._on_failed:
+                            self._on_failed(tid, str(exc))
+                        handles.pop(tid, None)
+                        completed_tid = tid
+                        break
                     if not done:
                         continue
                     if isinstance(result_or_error, Exception):

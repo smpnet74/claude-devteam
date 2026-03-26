@@ -133,6 +133,10 @@ def execute_post_pr_review(
                 json_schema=ReviewResult.model_json_schema(),
             )
         except Exception as e:
+            if not gate.required:
+                # Optional gate transport error: treat as failed-but-non-blocking
+                failed_gates.append(gate.name)
+                continue
             raise RuntimeError(f"Post-PR review gate '{gate.name}' invocation failed: {e}") from e
         result = ReviewResult.model_validate(raw)
         gate_results[gate.name] = result

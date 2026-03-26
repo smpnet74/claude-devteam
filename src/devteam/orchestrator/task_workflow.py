@@ -190,6 +190,11 @@ def execute_task_workflow(
         if impl.status == "blocked":
             result.status = TaskStatus.FAILED
             result.error = f"Engineer reported blocked: {impl.summary}"
+            result.question = QuestionRecord(
+                question=impl.question or "Unspecified blocker",
+                question_type=QuestionType.BLOCKED,
+                context=f"Blocked during iteration {iteration} of task {ctx.task.id}",
+            )
             return result
 
         # Step 2: Peer review (enforced before EM review)
@@ -197,8 +202,9 @@ def execute_task_workflow(
         pr = peer_review(ctx, impl, invoker)
         result.peer_review = pr
 
-        # If peer review blocks, don't proceed to EM
-        if pr.verdict == "blocked":
+        # If peer review requires revision (needs_revision or blocked),
+        # don't proceed to EM -- loop back to the engineer
+        if pr.needs_revision:
             revision_feedback = pr.summary
             result.status = TaskStatus.REVISION_REQUESTED
             continue

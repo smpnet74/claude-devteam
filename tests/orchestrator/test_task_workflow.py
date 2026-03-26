@@ -389,3 +389,88 @@ class TestFeedbackInjection:
 
         first_call_kwargs = invoker.invoke.call_args_list[0].kwargs
         assert "Use PostgreSQL" in first_call_kwargs["prompt"]
+
+
+# ---------------------------------------------------------------------------
+# Invalid agent payload handling
+# ---------------------------------------------------------------------------
+
+
+class TestInvalidAgentPayloads:
+    def test_invalid_implementation_result_propagates(self) -> None:
+        """Engineer returns malformed payload -- ValidationError propagates."""
+        from pydantic import ValidationError
+
+        invoker = MagicMock()
+        invoker.invoke.return_value = {"summary": "partial"}  # missing required fields
+        ctx = _make_ctx()
+
+        with pytest.raises(ValidationError):
+            engineer_execute(ctx, invoker)
+
+    def test_invalid_review_result_propagates(self) -> None:
+        """Peer review returns malformed payload -- ValidationError propagates."""
+        from pydantic import ValidationError
+
+        invoker = MagicMock()
+        invoker.invoke.return_value = {"verdict": "invalid_value", "summary": "ok", "comments": []}
+        ctx = _make_ctx()
+        impl = ImplementationResult.model_validate(_impl_result())
+
+        with pytest.raises(ValidationError):
+            peer_review(ctx, impl, invoker)
+
+    def test_invalid_review_missing_comments_for_rejection(self) -> None:
+        """Review verdict needs_revision with empty comments fails validation."""
+        from pydantic import ValidationError
+
+        invoker = MagicMock()
+        invoker.invoke.return_value = {
+            "verdict": "needs_revision",
+            "summary": "needs work",
+            "comments": [],
+        }
+        ctx = _make_ctx()
+        impl = ImplementationResult.model_validate(_impl_result())
+
+        with pytest.raises(ValidationError, match="requires at least one comment"):
+            peer_review(ctx, impl, invoker)
+
+
+# ---------------------------------------------------------------------------
+# Peer needs_revision regression
+# ---------------------------------------------------------------------------
+
+
+class TestPeerNeedsRevisionRegression:
+    def test_peer_needs_revision_triggers_revision_loop(self) -> None:
+        """Peer returning needs_revision must trigger revision, not fall through to EM."""
+        invoker = MagicMock()
+        call_order: list[str] = []
+
+        def track_invoke(role: str, prompt: str, **kwargs: object) -> dict[str, object]:
+            call_order.append(role)
+            if role == "backend_engineer":
+                return _impl_result()
+            elif role == "frontend_engineer":
+                # First peer review: needs_revision; second: approved
+                peer_count = sum(1 for c in call_order if c == "frontend_engineer")
+                if peer_count == 1:
+                    return _review_result("needs_revision")
+                return _review_result("approved")
+            elif role == "em_team_a":
+                return _review_result("approved")
+            raise ValueError(f"Unexpected role: {role}")
+
+        invoker.invoke.side_effect = track_invoke
+        ctx = _make_ctx()
+
+        result = execute_task_workflow(ctx, invoker)
+
+        assert result.status == TaskStatus.APPROVED
+        # After the peer needs_revision, engineer must be re-invoked before EM
+        first_peer_idx = call_order.index("frontend_engineer")
+        assert call_order[first_peer_idx + 1] == "backend_engineer"
+        # EM should only be called once (in the second iteration)
+        assert call_order.count("em_team_a") == 1
+        assert result.revision_count == 1
