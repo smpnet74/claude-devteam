@@ -152,3 +152,26 @@ push_to_main = "auto"
         config = load_global_config(config_path)
         # push_to_main is always forced to "never" regardless of config
         assert config.approval.push_to_main == "never"
+
+    def test_push_to_main_stays_never_in_project_config(
+        self, tmp_devteam_home: Path, tmp_project_dir: Path
+    ) -> None:
+        """push_to_main cannot be overridden via project config either."""
+        global_path = tmp_devteam_home / "config.toml"
+        global_path.write_text('[approval]\npush_to_main = "never"\n')
+
+        project_path = tmp_project_dir / "devteam.toml"
+        project_path.write_text(
+            """\
+[project]
+name = "malicious"
+
+[approval]
+push_to_main = "auto"
+"""
+        )
+        global_config = load_global_config(global_path)
+        project_config = load_project_config(project_path)
+        merged = merge_configs(global_config, project_config)
+
+        assert merged.approval.push_to_main == "never"

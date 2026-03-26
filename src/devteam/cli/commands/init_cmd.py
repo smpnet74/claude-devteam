@@ -6,6 +6,8 @@ from pathlib import Path
 
 import typer
 
+from devteam.cli.common import get_devteam_home
+
 app = typer.Typer(help="Initialize devteam.")
 
 
@@ -50,11 +52,6 @@ worktree_dir = ".worktrees"
 """
 
 DIRS = ["logs", "traces", "exports", "focus", "agents", "projects", "knowledge"]
-
-
-def get_devteam_home() -> Path:
-    """Return the devteam home directory path."""
-    return Path.home() / ".devteam"
 
 
 def init_devteam_home(home: Path) -> bool:

@@ -5,10 +5,10 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
-from pathlib import Path
 
 import typer
 
+from devteam.cli.common import get_devteam_home
 from devteam.daemon.process import (
     DaemonNotRunningError,
     get_daemon_state,
@@ -16,11 +16,6 @@ from devteam.daemon.process import (
 )
 
 app = typer.Typer(help="Manage the devteam daemon process.")
-
-
-def get_devteam_home() -> Path:
-    """Return the devteam home directory path."""
-    return Path.home() / ".devteam"
 
 
 @app.command()
@@ -32,6 +27,10 @@ def start(
     home = get_devteam_home()
     pid_path = home / "daemon.pid"
     port_path = home / "daemon.port"
+
+    if not home.exists():
+        typer.echo("Error: devteam not initialized. Run 'devteam init' first.")
+        raise typer.Exit(code=1)
 
     state = get_daemon_state(pid_path, port_path)
     if state.running:
@@ -105,3 +104,12 @@ def status() -> None:
         typer.echo(f"Daemon is not running (stale PID file: {state.pid})")
     else:
         typer.echo("Daemon is not running.")
+
+
+if __name__ == "__main__":
+    import argparse
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--port", type=int, default=7432)
+    args = parser.parse_args()
+    start(port=args.port, foreground=True)
