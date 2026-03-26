@@ -79,10 +79,37 @@ class TestDaemonCommands:
 
 
 class TestProjectCommands:
-    def test_project_add_stub(self, tmp_path: Path) -> None:
-        result = runner.invoke(app, ["project", "add", str(tmp_path)])
+    def test_project_add_copies_agents(self, tmp_path: Path) -> None:
+        # Set up a fake devteam home with agents
+        devteam_home = tmp_path / "devteam_home"
+        agents_dir = devteam_home / "agents"
+        agents_dir.mkdir(parents=True)
+        (agents_dir / "ceo.md").write_text("---\nmodel: opus\ntools:\n  - Read\n---\nCEO prompt")
+
+        project_dir = tmp_path / "project"
+        project_dir.mkdir()
+
+        with patch("devteam.cli.commands.project_cmd.get_devteam_home", return_value=devteam_home):
+            result = runner.invoke(app, ["project", "add", str(project_dir)])
         assert result.exit_code == 0
-        assert "not yet implemented" in result.output.lower()
+        assert "Copied" in result.output
+        assert (project_dir / ".claude" / "agents" / "ceo.md").exists()
+
+    def test_project_add_nonexistent_dir(self, tmp_path: Path) -> None:
+        result = runner.invoke(app, ["project", "add", str(tmp_path / "nonexistent")])
+        assert result.exit_code == 1
+        assert "not found" in result.output.lower()
+
+    def test_project_add_no_init(self, tmp_path: Path) -> None:
+        devteam_home = tmp_path / "devteam_home"
+        # Don't create agents dir — simulates not having run `devteam init`
+        project_dir = tmp_path / "project"
+        project_dir.mkdir()
+
+        with patch("devteam.cli.commands.project_cmd.get_devteam_home", return_value=devteam_home):
+            result = runner.invoke(app, ["project", "add", str(project_dir)])
+        assert result.exit_code == 1
+        assert "devteam init" in result.output.lower()
 
     def test_project_remove_stub(self) -> None:
         result = runner.invoke(app, ["project", "remove", "myapp"])
