@@ -64,6 +64,8 @@ def is_small_fix_with_no_behavior_change(
     files_changed: list[str],
 ) -> bool:
     """Determine if a small fix has no behavior change (skip QA)."""
+    if not files_changed:
+        return False
     if work_type != WorkType.CODE:
         return False
     # Heuristic: if only docs/config/style files changed, no behavior change

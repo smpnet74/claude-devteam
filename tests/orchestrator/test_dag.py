@@ -1,5 +1,6 @@
 """Tests for DAG execution engine."""
 
+import pytest
 from unittest.mock import MagicMock
 
 from devteam.orchestrator.dag import (
@@ -53,6 +54,26 @@ class TestBuildDAG:
         dag = build_dag(decomp)
         assert dag.dependency_graph["T-1"] == []
         assert dag.dependency_graph["T-2"] == []
+
+    def test_unknown_dependency_raises(self) -> None:
+        # Use model_construct to bypass DecompositionResult's own graph
+        # validation so we can test the build_dag guard in isolation.
+        t1 = _make_task("T-1")
+        t2_raw = TaskDecomposition.model_construct(
+            id="T-2",
+            description="Task T-2",
+            assigned_to="backend_engineer",
+            team="a",
+            depends_on=["T-99"],
+            pr_group="feat/main",
+        )
+        decomp = DecompositionResult.model_construct(
+            tasks=[t1, t2_raw],
+            peer_assignments={},
+            parallel_groups=[],
+        )
+        with pytest.raises(ValueError, match="Task T-2 depends on unknown task T-99"):
+            build_dag(decomp)
 
 
 # ---------------------------------------------------------------------------
@@ -392,3 +413,62 @@ class TestDAGExecutor:
         assert result.all_succeeded
         assert result.results == {}
         assert result.failed_tasks == {}
+
+    def test_timeout_raises(self) -> None:
+        """DAG execution should raise RuntimeError when max_wait_seconds exceeded."""
+
+        def launch(task: TaskDecomposition) -> str:
+            return task.id
+
+        def wait(handle: str) -> tuple[bool, object]:
+            # Never completes
+            return (False, None)
+
+        decomp = DecompositionResult(
+            tasks=[_make_task("T-1")],
+            peer_assignments={},
+            parallel_groups=[],
+        )
+        dag = build_dag(decomp)
+        executor = DAGExecutor(
+            launch_task=launch,
+            check_complete=wait,
+            max_wait_seconds=0.0,
+        )
+
+        with pytest.raises(RuntimeError, match="DAG execution timed out"):
+            executor.execute(dag)
+
+    def test_launch_exception_marks_task_failed(self) -> None:
+        """If launch_task raises, the task is marked failed and dependents are blocked."""
+        launched: list[str] = []
+
+        def launch(task: TaskDecomposition) -> str:
+            if task.id == "T-1":
+                raise RuntimeError("Agent unavailable")
+            launched.append(task.id)
+            return task.id
+
+        def wait(handle: str) -> tuple[bool, object]:
+            return (True, "ok")
+
+        decomp = DecompositionResult(
+            tasks=[
+                _make_task("T-1"),
+                _make_task("T-2", depends_on=["T-1"]),
+                _make_task("T-3"),
+            ],
+            peer_assignments={},
+            parallel_groups=[],
+        )
+        dag = build_dag(decomp)
+        executor = DAGExecutor(launch_task=launch, check_complete=wait)
+        result = executor.execute(dag)
+
+        assert not result.all_succeeded
+        assert "T-1" in result.failed_tasks
+        assert "Agent unavailable" in result.failed_tasks["T-1"]
+        # T-2 depends on T-1, so should never launch
+        assert "T-2" not in launched
+        # T-3 is independent, should succeed
+        assert "T-3" in result.results

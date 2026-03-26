@@ -109,8 +109,8 @@ class TestSmallFixDetection:
         )
 
     def test_empty_files_list(self) -> None:
-        # Empty list: all() on empty iterable is True, but this is CODE
-        assert is_small_fix_with_no_behavior_change(WorkType.CODE, [])
+        # Empty list should be treated as "no info" and return False
+        assert not is_small_fix_with_no_behavior_change(WorkType.CODE, [])
 
 
 # ---------------------------------------------------------------------------

@@ -98,6 +98,13 @@ def build_dag(decomposition: DecompositionResult) -> DAGState:
     for task in decomposition.tasks:
         dag.nodes[task.id] = TaskNode(task=task)
         dag.dependency_graph[task.id] = list(task.depends_on)
+
+    all_task_ids = {t.id for t in decomposition.tasks}
+    for tid, deps in dag.dependency_graph.items():
+        for dep in deps:
+            if dep not in all_task_ids:
+                raise ValueError(f"Task {tid} depends on unknown task {dep}")
+
     return dag
 
 
@@ -125,6 +132,7 @@ class DAGExecutor:
         check_complete: Callable[[str], tuple[bool, Any]],
         on_task_complete: Callable[[str, Any], None] | None = None,
         on_task_failed: Callable[[str, str], None] | None = None,
+        max_wait_seconds: float = 3600.0,
     ) -> None:
         """Initialise the executor.
 
@@ -136,11 +144,14 @@ class DAGExecutor:
                 is an Exception. Otherwise it is the task result.
             on_task_complete: Optional callback when a task completes.
             on_task_failed: Optional callback when a task fails.
+            max_wait_seconds: Maximum wall-clock time for the entire DAG
+                execution before raising RuntimeError.
         """
         self._launch = launch_task
         self._check_complete = check_complete
         self._on_complete = on_task_complete
         self._on_failed = on_task_failed
+        self._max_wait_seconds = max_wait_seconds
 
     def execute(self, dag: DAGState) -> DAGExecutionResult:
         """Execute the DAG, respecting dependencies.
@@ -153,12 +164,19 @@ class DAGExecutor:
         5. Repeat until all tasks are done or failed
         """
         handles: dict[str, str] = {}  # task_id -> handle
+        start_time = time.monotonic()
 
         while dag.has_pending or dag.has_running:
             # Launch ready tasks
             for task in dag.get_ready_tasks():
                 if task.id not in handles:
-                    handle = self._launch(task)
+                    try:
+                        handle = self._launch(task)
+                    except Exception as exc:
+                        dag.mark_failed(task.id, str(exc))
+                        if self._on_failed:
+                            self._on_failed(task.id, str(exc))
+                        continue
                     handles[task.id] = handle
                     dag.mark_running(task.id)
 
@@ -187,6 +205,8 @@ class DAGExecutor:
                     completed_tid = tid
                     break  # Process one completion, then re-check ready tasks
                 if completed_tid is None:
+                    if time.monotonic() - start_time > self._max_wait_seconds:
+                        raise RuntimeError("DAG execution timed out")
                     time.sleep(0.1)  # Brief poll interval; no-op in sync tests
 
         return DAGExecutionResult(
