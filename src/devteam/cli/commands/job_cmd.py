@@ -72,10 +72,13 @@ def register_job_commands(app: typer.Typer) -> None:
 
     @app.command()
     def resume(
-        target: str = typer.Argument(help="Job ID (W-1) or omit to resume daemon"),
+        target: Optional[str] = typer.Argument(None, help="Job ID (W-1); omit to resume daemon"),
     ) -> None:
         """Resume a paused job or recover workflows after crash."""
-        typer.echo(f"Not yet implemented: resume {target}")
+        if target:
+            typer.echo(f"Not yet implemented: resume {target}")
+        else:
+            typer.echo("Not yet implemented: resume daemon")
 
     @app.command()
     def cancel(

@@ -15,7 +15,7 @@ class TestDatabaseConfig:
 
     def test_db_url(self, tmp_devteam_home: Path) -> None:
         config = DatabaseConfig(devteam_home=tmp_devteam_home)
-        assert config.db_url.startswith("sqlite:///")
+        assert config.db_url == f"sqlite:///{config.db_path}"
 
 
 class TestDatabaseInit:

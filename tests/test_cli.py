@@ -74,12 +74,12 @@ class TestDaemonCommands:
 class TestProjectCommands:
     def test_project_add_stub(self, tmp_path: Path) -> None:
         result = runner.invoke(app, ["project", "add", str(tmp_path)])
-        assert result.exit_code == 0
+        assert result.exit_code == 1
         assert "not yet implemented" in result.output.lower()
 
     def test_project_remove_stub(self) -> None:
         result = runner.invoke(app, ["project", "remove", "myapp"])
-        assert result.exit_code == 0
+        assert result.exit_code == 1
         assert "not yet implemented" in result.output.lower()
 
 

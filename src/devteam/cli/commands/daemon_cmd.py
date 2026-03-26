@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
+import time
 
 import typer
 
@@ -69,7 +70,13 @@ def start(
             stderr=subprocess.DEVNULL,
             start_new_session=True,
         )
-        typer.echo(f"Daemon starting (PID {proc.pid}, port {port})")
+        time.sleep(0.5)
+        state = get_daemon_state(pid_path, port_path)
+        if state.running:
+            typer.echo(f"Daemon started (PID {proc.pid}, port {port})")
+        else:
+            typer.echo(f"Warning: daemon process {proc.pid} may not have started correctly")
+            raise typer.Exit(code=1)
 
 
 @app.command()

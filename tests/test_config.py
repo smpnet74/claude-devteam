@@ -2,8 +2,10 @@
 
 from pathlib import Path
 
+import pytest
 
 from devteam.config.settings import (
+    ConfigError,
     DevteamConfig,
     load_global_config,
     load_project_config,
@@ -176,3 +178,17 @@ push_to_main = "auto"
         merged = merge_configs(global_config, project_config)
 
         assert merged.approval.push_to_main == "never"
+
+
+class TestMalformedConfig:
+    def test_malformed_global_config_raises_config_error(self, tmp_devteam_home: Path) -> None:
+        config_path = tmp_devteam_home / "config.toml"
+        config_path.write_text("this is not [valid toml ===")
+        with pytest.raises(ConfigError):
+            load_global_config(config_path)
+
+    def test_malformed_project_config_raises_config_error(self, tmp_project_dir: Path) -> None:
+        config_path = tmp_project_dir / "devteam.toml"
+        config_path.write_text("this is not [valid toml ===")
+        with pytest.raises(ConfigError):
+            load_project_config(config_path)

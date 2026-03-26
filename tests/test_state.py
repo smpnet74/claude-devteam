@@ -70,6 +70,8 @@ class TestTaskTransitions:
             TaskStatus.WAITING_ON_QUESTION,
             TaskStatus.WAITING_ON_CI,
             TaskStatus.PAUSED,
+            TaskStatus.REVISION_REQUESTED,
+            TaskStatus.FAILED,
         ]
         for status in nonterminal:
             validate_task_transition(status, TaskStatus.CANCELED)
@@ -147,6 +149,12 @@ class TestPRTransitions:
     def test_cannot_cancel_cleaned_up(self) -> None:
         with pytest.raises(InvalidTransitionError):
             validate_pr_transition(PRStatus.CLEANED_UP, PRStatus.CANCELED)
+
+    def test_canceled_from_ci_passed(self) -> None:
+        validate_pr_transition(PRStatus.CI_PASSED, PRStatus.CANCELED)
+
+    def test_canceled_from_ready_for_merge(self) -> None:
+        validate_pr_transition(PRStatus.READY_FOR_MERGE, PRStatus.CANCELED)
 
     def test_canceled_is_terminal(self) -> None:
         with pytest.raises(InvalidTransitionError):

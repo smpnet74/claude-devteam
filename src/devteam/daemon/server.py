@@ -6,9 +6,10 @@ and agent invocation flows through this server.
 """
 
 from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 import devteam
+from devteam.models.entities import Priority
 
 
 def _not_implemented(feature: str) -> HTTPException:
@@ -25,7 +26,7 @@ class StartJobRequest(BaseModel):
     plan_path: str | None = None
     prompt: str | None = None
     issue_url: str | None = None
-    priority: str = "normal"
+    priority: Priority = Priority.NORMAL
 
 
 class AnswerRequest(BaseModel):
@@ -34,7 +35,7 @@ class AnswerRequest(BaseModel):
 
 class FocusRequest(BaseModel):
     job_id: str
-    shell_pid: int
+    shell_pid: int = Field(gt=0)
 
 
 class ProjectAddRequest(BaseModel):

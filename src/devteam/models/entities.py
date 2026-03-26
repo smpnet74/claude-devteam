@@ -183,6 +183,13 @@ class Question(BaseModel):
             raise ValueError(f"Job ID must match W-N format, got: {v}")
         return v
 
+    @field_validator("task_id")
+    @classmethod
+    def validate_task_id(cls, v: str) -> str:
+        if not TASK_ID_PATTERN.match(v):
+            raise ValueError(f"Task ID must match T-N format, got: {v}")
+        return v
+
     @field_validator("question_id")
     @classmethod
     def validate_question_id(cls, v: str) -> str:
@@ -218,4 +225,7 @@ class PRGroup(BaseModel):
     def validate_task_ids_not_empty(cls, v: list[str]) -> list[str]:
         if not v:
             raise ValueError("PRGroup must contain at least one task")
+        for tid in v:
+            if not TASK_ID_PATTERN.match(tid):
+                raise ValueError(f"Task ID must match T-N format, got: {tid}")
         return v

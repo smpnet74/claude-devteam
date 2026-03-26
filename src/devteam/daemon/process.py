@@ -44,7 +44,7 @@ def _is_process_alive(pid: int) -> bool:
     try:
         os.kill(pid, 0)
         return True
-    except (OSError, ProcessLookupError):
+    except OSError:
         return False
 
 
@@ -92,7 +92,7 @@ def acquire_pid_lock(pid_path: Path, new_pid: int) -> None:
             release_pid_lock(pid_path)
 
     # Should not reach here, but guard against infinite loop
-    write_pid_file(pid_path, new_pid)
+    raise RuntimeError("Failed to acquire PID lock after stale recovery")
 
 
 def release_pid_lock(pid_path: Path) -> None:
@@ -113,7 +113,10 @@ def read_port_file(port_path: Path) -> int | None:
     if not port_path.exists():
         return None
     try:
-        return int(port_path.read_text().strip())
+        port = int(port_path.read_text().strip())
+        if port <= 0 or port > 65535:
+            return None
+        return port
     except (ValueError, OSError):
         return None
 

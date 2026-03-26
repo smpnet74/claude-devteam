@@ -181,7 +181,7 @@ def load_project_config(config_path: Path) -> ProjectConfig | None:
     except OSError as e:
         raise ConfigError(config_path, f"could not read file: {e}") from e
     if not text.strip():
-        return ProjectConfig()
+        return None
 
     try:
         data = tomllib.loads(text)

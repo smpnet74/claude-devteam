@@ -13,6 +13,7 @@ def add(
 ) -> None:
     """Register a project repository with the daemon."""
     typer.echo(f"Not yet implemented: project add ({path})")
+    raise typer.Exit(code=1)
 
 
 @app.command()
@@ -21,3 +22,4 @@ def remove(
 ) -> None:
     """Unregister a project from the daemon."""
     typer.echo(f"Not yet implemented: project remove ({name})")
+    raise typer.Exit(code=1)
