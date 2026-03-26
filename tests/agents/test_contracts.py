@@ -482,6 +482,92 @@ class TestDecompositionResultEmptyTasks:
             )
 
 
+class TestDependencyCycleDetection:
+    """Cycle detection in DecompositionResult task graph."""
+
+    def _make_task(self, task_id, depends_on=None):
+        return TaskDecomposition(
+            id=task_id,
+            description=f"Task {task_id}",
+            assigned_to="backend_engineer",
+            team="a",
+            depends_on=depends_on or [],
+            pr_group="group-1",
+        )
+
+    def test_cycle_of_two_raises(self):
+        t1 = self._make_task("T-1", depends_on=["T-2"])
+        t2 = self._make_task("T-2", depends_on=["T-1"])
+        with pytest.raises(ValueError, match="Dependency cycle detected"):
+            DecompositionResult(tasks=[t1, t2])
+
+    def test_cycle_of_three_raises(self):
+        t1 = self._make_task("T-1", depends_on=["T-3"])
+        t2 = self._make_task("T-2", depends_on=["T-1"])
+        t3 = self._make_task("T-3", depends_on=["T-2"])
+        with pytest.raises(ValueError, match="Dependency cycle detected"):
+            DecompositionResult(tasks=[t1, t2, t3])
+
+    def test_no_cycle_passes(self):
+        t1 = self._make_task("T-1")
+        t2 = self._make_task("T-2", depends_on=["T-1"])
+        t3 = self._make_task("T-3", depends_on=["T-1", "T-2"])
+        result = DecompositionResult(tasks=[t1, t2, t3])
+        assert len(result.tasks) == 3
+
+
+class TestSelfDependency:
+    """Self-dependency check on TaskDecomposition."""
+
+    def test_self_dependency_raises(self):
+        with pytest.raises(ValueError, match="Task T-1 cannot depend on itself"):
+            TaskDecomposition(
+                id="T-1",
+                description="test",
+                assigned_to="backend_engineer",
+                team="a",
+                depends_on=["T-1"],
+                pr_group="test",
+            )
+
+
+class TestEmptyPathValidation:
+    """Validate files_changed/tests_added entries are not empty."""
+
+    def test_empty_string_in_files_changed_raises(self):
+        with pytest.raises(ValueError, match="File paths must not be empty"):
+            ImplementationResult(
+                status="completed",
+                question=None,
+                files_changed=["src/main.py", ""],
+                tests_added=[],
+                summary="Done",
+                confidence="high",
+            )
+
+    def test_empty_string_in_tests_added_raises(self):
+        with pytest.raises(ValueError, match="File paths must not be empty"):
+            ImplementationResult(
+                status="completed",
+                question=None,
+                files_changed=[],
+                tests_added=["  "],
+                summary="Done",
+                confidence="high",
+            )
+
+    def test_whitespace_only_path_raises(self):
+        with pytest.raises(ValueError, match="File paths must not be empty"):
+            ImplementationResult(
+                status="completed",
+                question=None,
+                files_changed=["   "],
+                tests_added=[],
+                summary="Done",
+                confidence="high",
+            )
+
+
 class TestSchemaForRole:
     """Test the helper that maps roles to their output schema."""
 

@@ -10,7 +10,7 @@ import json
 import logging
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 from pydantic import BaseModel
 
@@ -51,7 +51,7 @@ class QueryOptions:
     model: str = ""
     system_prompt: str = ""
     allowed_tools: list[str] = field(default_factory=list)
-    permission_mode: str = "default"
+    permission_mode: Literal["default", "acceptEdits", "plan", "bypassPermissions"] = "default"
     cwd: str | None = None
     output_format: dict[str, Any] | None = None
 
@@ -61,8 +61,8 @@ class QueryOptions:
 _ROLE_SCHEMA_MAP: dict[str, type[BaseModel]] = {
     "ceo": RoutingResult,
     "chief_architect": DecompositionResult,
-    "planner_researcher_a": DecompositionResult,
-    "planner_researcher_b": DecompositionResult,
+    "planner_researcher_a": ImplementationResult,
+    "planner_researcher_b": ImplementationResult,
     "em_team_a": ReviewResult,
     "em_team_b": ReviewResult,
     "qa_engineer": ReviewResult,
@@ -91,6 +91,15 @@ async def _run_query(prompt: str, options: QueryOptions) -> _ResultMessage:
     Note: QueryOptions is our local mirror of ClaudeAgentOptions. We cast to
     Any at the SDK boundary so pyright does not complain about structural
     type mismatches.
+
+    # Note: At runtime, QueryOptions fields map to ClaudeAgentOptions as follows:
+    # QueryOptions.model -> ClaudeAgentOptions.model
+    # QueryOptions.system_prompt -> ClaudeAgentOptions.system_prompt
+    # QueryOptions.allowed_tools -> ClaudeAgentOptions.allowed_tools
+    # QueryOptions.permission_mode -> ClaudeAgentOptions.permission_mode
+    # QueryOptions.cwd -> ClaudeAgentOptions.cwd
+    # QueryOptions.output_format -> ClaudeAgentOptions.output_format
+    # The _run_query method handles this translation.
     """
     from claude_agent_sdk import ResultMessage, query
 
@@ -222,10 +231,23 @@ class AgentInvoker:
         except Exception as e:
             raise InvocationError(f"Agent '{role}' invocation failed: {e}") from e
 
+        # Check for agent errors before parsing
+        if hasattr(sdk_result, "is_error") and sdk_result.is_error:
+            raise InvocationError(
+                f"Agent '{role}' returned an error: {getattr(sdk_result, 'result', 'unknown error')}"
+            )
+
         # Parse the structured JSON output
         result_type = self._get_schema_for_role(role)
         try:
-            data = json.loads(sdk_result.result)  # type: ignore[arg-type]
-            return result_type.model_validate(data)
+            # Prefer structured_output if available
+            if (
+                hasattr(sdk_result, "structured_output")
+                and sdk_result.structured_output is not None
+            ):
+                raw_data = sdk_result.structured_output
+            else:
+                raw_data = json.loads(sdk_result.result)  # type: ignore[arg-type]
+            return result_type.model_validate(raw_data)
         except (json.JSONDecodeError, ValueError, TypeError) as e:
             raise InvocationError(f"Failed to parse agent '{role}' output: {e}") from e

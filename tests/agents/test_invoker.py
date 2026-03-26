@@ -192,6 +192,8 @@ class TestAgentInvoker:
     async def test_invoke_calls_run_query(self, invoker, context):
         """Test that invoke() calls _run_query with correct prompt + options."""
         mock_result = MagicMock()
+        mock_result.is_error = False
+        mock_result.structured_output = None
         mock_result.result = json.dumps(
             {
                 "status": "completed",
@@ -229,6 +231,8 @@ class TestAgentInvoker:
             "confidence": "high",
         }
         mock_result = MagicMock()
+        mock_result.is_error = False
+        mock_result.structured_output = None
         mock_result.result = json.dumps(result_data)
 
         with patch(_MOCK_TARGET, new_callable=AsyncMock) as mock_run:
@@ -258,6 +262,8 @@ class TestAgentInvoker:
     async def test_invoke_invalid_json_raises(self, invoker, context):
         """Test that unparseable agent output raises InvocationError."""
         mock_result = MagicMock()
+        mock_result.is_error = False
+        mock_result.structured_output = None
         mock_result.result = "This is not JSON"
 
         with patch(_MOCK_TARGET, new_callable=AsyncMock) as mock_run:
@@ -277,6 +283,8 @@ class TestSdkCallShape:
     async def test_sdk_call_shape(self, invoker, context):
         """Patch claude_agent_sdk.query directly and verify the call shape."""
         mock_result_msg = MagicMock()
+        mock_result_msg.is_error = False
+        mock_result_msg.structured_output = None
         mock_result_msg.result = json.dumps(
             {
                 "status": "completed",

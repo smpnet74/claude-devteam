@@ -61,6 +61,7 @@ class AgentDefinition:
         Raises:
             ValueError: If frontmatter is missing or invalid.
         """
+        content = content.replace("\r\n", "\n")
         match = _FRONTMATTER_RE.match(content)
         if not match:
             raise ValueError(

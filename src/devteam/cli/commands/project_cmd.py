@@ -29,7 +29,11 @@ def add(
         typer.echo("Error: run 'devteam init' first to set up agent templates.")
         raise typer.Exit(code=1)
 
-    copied = copy_agents_to_project(global_agents_dir, project_dir, overwrite=False)
+    try:
+        copied = copy_agents_to_project(global_agents_dir, project_dir, overwrite=False)
+    except FileNotFoundError as e:
+        typer.echo(f"Error: {e}")
+        raise typer.Exit(code=1)
     claude_agents = project_dir / ".claude" / "agents"
     typer.echo(f"Copied {len(copied)} agent definitions to {claude_agents}")
 

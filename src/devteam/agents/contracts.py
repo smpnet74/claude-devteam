@@ -34,6 +34,14 @@ class ImplementationResult(BaseModel):
         description="Agent's confidence in the implementation quality",
     )
 
+    @field_validator("files_changed", "tests_added")
+    @classmethod
+    def _no_empty_paths(cls, v: list[str]) -> list[str]:
+        for path in v:
+            if not path.strip():
+                raise ValueError("File paths must not be empty strings")
+        return v
+
     @model_validator(mode="after")
     def _question_required_when_blocked(self) -> ImplementationResult:
         if self.status in ("needs_clarification", "blocked") and self.question is None:
@@ -105,6 +113,12 @@ class TaskDecomposition(BaseModel):
                 raise ValueError(f"depends_on entries must match T-<n> (e.g., T-1), got '{dep}'")
         return v
 
+    @model_validator(mode="after")
+    def _no_self_dependency(self) -> "TaskDecomposition":
+        if self.id in self.depends_on:
+            raise ValueError(f"Task {self.id} cannot depend on itself")
+        return self
+
 
 class DecompositionResult(BaseModel):
     """Result envelope for Chief Architect decomposition step."""
@@ -142,6 +156,24 @@ class DecompositionResult(BaseModel):
             for tid in group:
                 if tid not in task_ids:
                     raise ValueError(f"parallel_groups references unknown task {tid}")
+        # Detect dependency cycles via DFS
+        visited: set[str] = set()
+        in_stack: set[str] = set()
+        adj = {t.id: list(t.depends_on) for t in self.tasks}
+
+        def _dfs(node: str) -> None:
+            if node in in_stack:
+                raise ValueError(f"Dependency cycle detected involving task {node}")
+            if node in visited:
+                return
+            in_stack.add(node)
+            for dep in adj.get(node, []):
+                _dfs(dep)
+            in_stack.remove(node)
+            visited.add(node)
+
+        for task in self.tasks:
+            _dfs(task.id)
         return self
 
 
