@@ -86,9 +86,9 @@ class PRStatus(str, Enum):
 
 # --- ID Validation Patterns ---
 
-JOB_ID_PATTERN = re.compile(r"^W-\d+$")
-TASK_ID_PATTERN = re.compile(r"^T-\d+$")
-QUESTION_ID_PATTERN = re.compile(r"^Q-\d+$")
+JOB_ID_PATTERN = re.compile(r"^W-[1-9]\d*$")
+TASK_ID_PATTERN = re.compile(r"^T-[1-9]\d*$")
+QUESTION_ID_PATTERN = re.compile(r"^Q-[1-9]\d*$")
 
 
 # --- Entity Models ---
@@ -102,7 +102,7 @@ class Job(BaseModel):
     """
 
     job_id: str
-    title: str
+    title: str = Field(min_length=1)
     status: JobStatus = JobStatus.CREATED
     priority: Priority = Priority.NORMAL
     spec_path: str | None = None
@@ -127,9 +127,9 @@ class Task(BaseModel):
 
     task_id: str
     job_id: str
-    description: str
-    assigned_to: str
-    app: str
+    description: str = Field(min_length=1)
+    assigned_to: str = Field(min_length=1)
+    app: str = Field(min_length=1)
     status: TaskStatus = TaskStatus.QUEUED
     depends_on: list[str] = Field(default_factory=list)
     pr_group: str | None = None
@@ -153,6 +153,14 @@ class Task(BaseModel):
             raise ValueError(f"Task ID must match T-N format, got: {v}")
         return v
 
+    @field_validator("depends_on")
+    @classmethod
+    def validate_depends_on(cls, v: list[str]) -> list[str]:
+        for tid in v:
+            if not TASK_ID_PATTERN.match(tid):
+                raise ValueError(f"depends_on task ID must match T-N format, got: {tid}")
+        return v
+
     @property
     def display_id(self) -> str:
         """Full display ID: W-1/T-1."""
@@ -168,8 +176,8 @@ class Question(BaseModel):
     question_id: str
     job_id: str
     task_id: str
-    question: str
-    raised_by: str
+    question: str = Field(min_length=1)
+    raised_by: str = Field(min_length=1)
     status: QuestionStatus = QuestionStatus.RAISED
     answer: str | None = None
     answered_by: str | None = None
@@ -209,15 +217,15 @@ class PRGroup(BaseModel):
     PR Groups are an operational concept defined during CA decomposition.
     """
 
-    branch_name: str
+    branch_name: str = Field(min_length=1)
     job_id: str
-    app: str
+    app: str = Field(min_length=1)
     task_ids: list[str]
     status: PRStatus = PRStatus.BRANCH_CREATED
-    pr_number: int | None = None
+    pr_number: int | None = Field(default=None, gt=0)
     pr_url: str | None = None
     worktree_path: str | None = None
-    fix_iterations: int = 0
+    fix_iterations: int = Field(default=0, ge=0)
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
     @field_validator("job_id")

@@ -6,8 +6,6 @@ they are the primary operator interface.
 
 from __future__ import annotations
 
-from typing import Optional
-
 import typer
 
 
@@ -16,12 +14,10 @@ def register_job_commands(app: typer.Typer) -> None:
 
     @app.command()
     def start(
-        spec: Optional[str] = typer.Option(None, "--spec", help="Path to spec document"),
-        plan: Optional[str] = typer.Option(None, "--plan", help="Path to plan document"),
-        prompt: Optional[str] = typer.Option(
-            None, "--prompt", help="Direct prompt for small fixes"
-        ),
-        issue: Optional[str] = typer.Option(None, "--issue", help="GitHub issue URL"),
+        spec: str | None = typer.Option(None, "--spec", help="Path to spec document"),
+        plan: str | None = typer.Option(None, "--plan", help="Path to plan document"),
+        prompt: str | None = typer.Option(None, "--prompt", help="Direct prompt for small fixes"),
+        issue: str | None = typer.Option(None, "--issue", help="GitHub issue URL"),
         priority: str = typer.Option("normal", "--priority", help="Job priority: high/normal/low"),
     ) -> None:
         """Start a new development job."""
@@ -39,7 +35,7 @@ def register_job_commands(app: typer.Typer) -> None:
 
     @app.command()
     def status(
-        target: Optional[str] = typer.Argument(
+        target: str | None = typer.Argument(
             None, help="Job ID (W-1), task (W-1/T-3), or omit for all"
         ),
         questions: bool = typer.Option(False, "--questions", help="Show pending questions"),
@@ -54,7 +50,7 @@ def register_job_commands(app: typer.Typer) -> None:
 
     @app.command()
     def stop(
-        target: Optional[str] = typer.Argument(None, help="Job ID (W-1) or omit for all"),
+        target: str | None = typer.Argument(None, help="Job ID (W-1) or omit for all"),
         force: bool = typer.Option(False, "--force", help="Force kill all agents"),
     ) -> None:
         """Stop active jobs gracefully."""
@@ -72,7 +68,7 @@ def register_job_commands(app: typer.Typer) -> None:
 
     @app.command()
     def resume(
-        target: Optional[str] = typer.Argument(None, help="Job ID (W-1); omit to resume daemon"),
+        target: str | None = typer.Argument(None, help="Job ID (W-1); omit to resume daemon"),
     ) -> None:
         """Resume a paused job or recover workflows after crash."""
         if target:

@@ -5,11 +5,15 @@ that the CLI communicates with. All job orchestration, state management,
 and agent invocation flows through this server.
 """
 
+import re
+
 from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 import devteam
 from devteam.models.entities import Priority
+
+_JOB_ID_PATTERN = re.compile(r"^W-[1-9]\d*$")
 
 
 def _not_implemented(feature: str) -> HTTPException:
@@ -21,7 +25,7 @@ def _not_implemented(feature: str) -> HTTPException:
 
 
 class StartJobRequest(BaseModel):
-    title: str
+    title: str = Field(min_length=1)
     spec_path: str | None = None
     plan_path: str | None = None
     prompt: str | None = None
@@ -30,16 +34,23 @@ class StartJobRequest(BaseModel):
 
 
 class AnswerRequest(BaseModel):
-    answer: str
+    answer: str = Field(min_length=1)
 
 
 class FocusRequest(BaseModel):
     job_id: str
     shell_pid: int = Field(gt=0)
 
+    @field_validator("job_id")
+    @classmethod
+    def validate_job_id(cls, v: str) -> str:
+        if not _JOB_ID_PATTERN.match(v):
+            raise ValueError(f"Job ID must match W-N format, got: {v}")
+        return v
+
 
 class ProjectAddRequest(BaseModel):
-    path: str
+    path: str = Field(min_length=1)
 
 
 def create_app() -> FastAPI:

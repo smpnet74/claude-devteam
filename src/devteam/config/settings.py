@@ -67,7 +67,7 @@ class KnowledgeConfig(BaseModel):
 
     embedding_model: str = "nomic-embed-text"
     surrealdb_url: str = "ws://localhost:8000"
-    cross_project_sharing: str = "layered"
+    cross_project_sharing: Literal["layered", "isolated"] = "layered"
 
 
 class RateLimitConfig(BaseModel):
@@ -102,7 +102,7 @@ class ExecutionConfig(BaseModel):
     test_command: str | None = None
     lint_command: str | None = None
     build_command: str | None = None
-    merge_strategy: str = "squash"
+    merge_strategy: Literal["squash", "merge", "rebase"] = "squash"
     pr_template: str | None = None
 
 

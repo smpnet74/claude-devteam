@@ -12,8 +12,10 @@ from devteam.daemon.process import (
     acquire_pid_lock,
     get_daemon_state,
     read_pid_file,
+    read_port_file,
     release_pid_lock,
     write_pid_file,
+    write_port_file,
 )
 
 
@@ -31,6 +33,32 @@ class TestPIDFile:
         pid_path = tmp_devteam_home / "daemon.pid"
         pid_path.write_text("not-a-number\n")
         assert read_pid_file(pid_path) is None
+
+    def test_read_pid_file_negative(self, tmp_devteam_home: Path) -> None:
+        pid_path = tmp_devteam_home / "daemon.pid"
+        pid_path.write_text("-5\n")
+        assert read_pid_file(pid_path) is None
+
+
+class TestPortFile:
+    def test_write_and_read_port_file(self, tmp_devteam_home: Path) -> None:
+        port_path = tmp_devteam_home / "daemon.port"
+        write_port_file(port_path, 7432)
+        assert read_port_file(port_path) == 7432
+
+    def test_read_port_file_missing(self, tmp_devteam_home: Path) -> None:
+        port_path = tmp_devteam_home / "daemon.port"
+        assert read_port_file(port_path) is None
+
+    def test_read_port_file_out_of_range(self, tmp_devteam_home: Path) -> None:
+        port_path = tmp_devteam_home / "daemon.port"
+        port_path.write_text("99999\n")
+        assert read_port_file(port_path) is None
+
+    def test_read_port_file_negative(self, tmp_devteam_home: Path) -> None:
+        port_path = tmp_devteam_home / "daemon.port"
+        port_path.write_text("-1\n")
+        assert read_port_file(port_path) is None
 
 
 class TestPIDLock:

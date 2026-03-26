@@ -44,8 +44,10 @@ def _is_process_alive(pid: int) -> bool:
     try:
         os.kill(pid, 0)
         return True
-    except OSError:
+    except ProcessLookupError:
         return False
+    except PermissionError:
+        return True  # Process exists but we can't signal it
 
 
 def write_pid_file(pid_path: Path, pid: int) -> None:
@@ -150,7 +152,15 @@ def stop_daemon(pid_path: Path, port_path: Path, *, force: bool = False) -> int:
     Raises DaemonNotRunningError if no daemon is running.
     """
     pid = read_pid_file(pid_path)
-    if pid is None or not _is_process_alive(pid):
+    if pid is None:
+        raise DaemonNotRunningError()
+    if not _is_process_alive(pid):
+        # Process already dead — clean up stale files
+        release_pid_lock(pid_path)
+        try:
+            port_path.unlink()
+        except FileNotFoundError:
+            pass
         raise DaemonNotRunningError()
 
     sig = signal.SIGKILL if force else signal.SIGTERM

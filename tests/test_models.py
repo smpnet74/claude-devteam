@@ -230,3 +230,110 @@ class TestPRGroupModel:
                 app="api-service",
                 task_ids=[],
             )
+
+    def test_pr_group_rejects_invalid_job_id(self) -> None:
+        with pytest.raises(ValueError):
+            PRGroup(
+                branch_name="feat/test",
+                job_id="invalid",
+                app="api-service",
+                task_ids=["T-1"],
+            )
+
+    def test_pr_group_rejects_invalid_task_id_format(self) -> None:
+        with pytest.raises(ValueError):
+            PRGroup(
+                branch_name="feat/test",
+                job_id="W-1",
+                app="api-service",
+                task_ids=["invalid"],
+            )
+
+    def test_pr_group_rejects_negative_fix_iterations(self) -> None:
+        with pytest.raises(ValueError):
+            PRGroup(
+                branch_name="feat/test",
+                job_id="W-1",
+                app="api-service",
+                task_ids=["T-1"],
+                fix_iterations=-1,
+            )
+
+
+class TestEmptyStringRejection:
+    def test_job_rejects_empty_title(self) -> None:
+        with pytest.raises(ValueError):
+            Job(job_id="W-1", title="")
+
+    def test_task_rejects_empty_description(self) -> None:
+        with pytest.raises(ValueError):
+            Task(task_id="T-1", job_id="W-1", description="", assigned_to="backend", app="api")
+
+    def test_task_rejects_empty_assigned_to(self) -> None:
+        with pytest.raises(ValueError):
+            Task(task_id="T-1", job_id="W-1", description="x", assigned_to="", app="api")
+
+    def test_task_rejects_empty_app(self) -> None:
+        with pytest.raises(ValueError):
+            Task(task_id="T-1", job_id="W-1", description="x", assigned_to="backend", app="")
+
+    def test_question_rejects_empty_question(self) -> None:
+        with pytest.raises(ValueError):
+            Question(
+                question_id="Q-1",
+                job_id="W-1",
+                task_id="T-1",
+                question="",
+                raised_by="backend",
+            )
+
+    def test_question_rejects_empty_raised_by(self) -> None:
+        with pytest.raises(ValueError):
+            Question(
+                question_id="Q-1",
+                job_id="W-1",
+                task_id="T-1",
+                question="Why?",
+                raised_by="",
+            )
+
+    def test_pr_group_rejects_empty_branch_name(self) -> None:
+        with pytest.raises(ValueError):
+            PRGroup(
+                branch_name="",
+                job_id="W-1",
+                app="api-service",
+                task_ids=["T-1"],
+            )
+
+    def test_pr_group_rejects_empty_app(self) -> None:
+        with pytest.raises(ValueError):
+            PRGroup(
+                branch_name="feat/test",
+                job_id="W-1",
+                app="",
+                task_ids=["T-1"],
+            )
+
+
+class TestDependsOnValidation:
+    def test_task_depends_on_validates_format(self) -> None:
+        with pytest.raises(ValueError):
+            Task(
+                task_id="T-2",
+                job_id="W-1",
+                description="x",
+                assigned_to="backend",
+                app="api",
+                depends_on=["invalid"],
+            )
+
+
+class TestZeroIdRejection:
+    def test_job_rejects_zero_id(self) -> None:
+        with pytest.raises(ValueError):
+            Job(job_id="W-0", title="Test")
+
+    def test_task_rejects_zero_id(self) -> None:
+        with pytest.raises(ValueError):
+            Task(task_id="T-0", job_id="W-1", description="x", assigned_to="backend", app="api")

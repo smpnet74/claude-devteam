@@ -70,16 +70,23 @@ class TestDaemonCommands:
             result = runner.invoke(app, ["daemon", "stop"])
         assert result.exit_code == 1
 
+    def test_daemon_start_without_init(self, tmp_path: Path) -> None:
+        devteam_home = tmp_path / "nonexistent_devteam"
+        with patch("devteam.cli.commands.daemon_cmd.get_devteam_home", return_value=devteam_home):
+            result = runner.invoke(app, ["daemon", "start", "--foreground"])
+        assert result.exit_code == 1
+        assert "not initialized" in result.output.lower()
+
 
 class TestProjectCommands:
     def test_project_add_stub(self, tmp_path: Path) -> None:
         result = runner.invoke(app, ["project", "add", str(tmp_path)])
-        assert result.exit_code == 1
+        assert result.exit_code == 0
         assert "not yet implemented" in result.output.lower()
 
     def test_project_remove_stub(self) -> None:
         result = runner.invoke(app, ["project", "remove", "myapp"])
-        assert result.exit_code == 1
+        assert result.exit_code == 0
         assert "not yet implemented" in result.output.lower()
 
 

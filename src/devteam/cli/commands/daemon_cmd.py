@@ -11,6 +11,7 @@ import typer
 
 from devteam.cli.common import get_devteam_home
 from devteam.daemon.process import (
+    DaemonAlreadyRunningError,
     DaemonNotRunningError,
     get_daemon_state,
     stop_daemon,
@@ -44,7 +45,11 @@ def start(
 
         import uvicorn
 
-        acquire_pid_lock(pid_path, os.getpid())
+        try:
+            acquire_pid_lock(pid_path, os.getpid())
+        except DaemonAlreadyRunningError as e:
+            typer.echo(f"Daemon already running (PID {e.pid})")
+            raise typer.Exit(code=1)
         typer.echo(f"Starting daemon on port {port} (foreground, PID {os.getpid()})")
         try:
             write_port_file(port_path, port)
@@ -77,7 +82,7 @@ def start(
         time.sleep(0.5)
         state = get_daemon_state(pid_path, port_path)
         if state.running:
-            typer.echo(f"Daemon started (PID {proc.pid}, port {port})")
+            typer.echo(f"Daemon started (PID {state.pid}, port {port})")
         else:
             typer.echo(f"Warning: daemon process {proc.pid} may not have started correctly")
             raise typer.Exit(code=1)

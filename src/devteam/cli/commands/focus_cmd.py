@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from typing import Optional
-
 import typer
 
 app = typer.Typer(help="Set or show the focused job for this shell.")
@@ -11,7 +9,7 @@ app = typer.Typer(help="Set or show the focused job for this shell.")
 
 @app.callback(invoke_without_command=True)
 def focus(
-    job_id: Optional[str] = typer.Argument(None, help="Job ID to focus (W-1)"),
+    job_id: str | None = typer.Argument(None, help="Job ID to focus (W-1)"),
     clear: bool = typer.Option(False, "--clear", help="Clear focus"),
 ) -> None:
     """Set, show, or clear the focused job for this shell session."""

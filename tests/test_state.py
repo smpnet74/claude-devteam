@@ -4,6 +4,10 @@ import pytest
 
 from devteam.models.entities import JobStatus, PRStatus, QuestionStatus, TaskStatus
 from devteam.models.state import (
+    JOB_TRANSITIONS,
+    QUESTION_TRANSITIONS,
+    PR_TRANSITIONS,
+    TASK_TRANSITIONS,
     InvalidTransitionError,
     validate_job_transition,
     validate_pr_transition,
@@ -67,6 +71,7 @@ class TestTaskTransitions:
             TaskStatus.ASSIGNED,
             TaskStatus.EXECUTING,
             TaskStatus.WAITING_ON_REVIEW,
+            TaskStatus.APPROVED,
             TaskStatus.WAITING_ON_QUESTION,
             TaskStatus.WAITING_ON_CI,
             TaskStatus.PAUSED,
@@ -165,3 +170,17 @@ class TestPRTransitions:
     def test_canceled_is_terminal(self) -> None:
         with pytest.raises(InvalidTransitionError):
             validate_pr_transition(PRStatus.CANCELED, PRStatus.BRANCH_CREATED)
+
+
+class TestTransitionTableCompleteness:
+    def test_job_transitions_cover_all_states(self) -> None:
+        assert set(JOB_TRANSITIONS.keys()) == set(JobStatus)
+
+    def test_task_transitions_cover_all_states(self) -> None:
+        assert set(TASK_TRANSITIONS.keys()) == set(TaskStatus)
+
+    def test_question_transitions_cover_all_states(self) -> None:
+        assert set(QUESTION_TRANSITIONS.keys()) == set(QuestionStatus)
+
+    def test_pr_transitions_cover_all_states(self) -> None:
+        assert set(PR_TRANSITIONS.keys()) == set(PRStatus)

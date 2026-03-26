@@ -192,3 +192,9 @@ class TestMalformedConfig:
         config_path.write_text("this is not [valid toml ===")
         with pytest.raises(ConfigError):
             load_project_config(config_path)
+
+    def test_invalid_port_value_raises_config_error(self, tmp_devteam_home: Path) -> None:
+        config_path = tmp_devteam_home / "config.toml"
+        config_path.write_text("[daemon]\nport = -1\n")
+        with pytest.raises(ConfigError):
+            load_global_config(config_path)
