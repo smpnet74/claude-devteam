@@ -5,33 +5,23 @@ that the CLI communicates with. All job orchestration, state management,
 and agent invocation flows through this server.
 """
 
-import re
+from typing import Annotated
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Path
 from pydantic import BaseModel, Field, field_validator
 
 import devteam
-from devteam.models.entities import Priority
+from devteam.models.entities import JOB_ID_PATTERN, QUESTION_ID_PATTERN, Priority
 
-_JOB_ID_PATTERN = re.compile(r"^W-[1-9]\d*$")
-_QUESTION_ID_PATTERN = re.compile(r"^Q-[1-9]\d*$")
+# --- Typed Path Parameters ---
+
+JobIdPath = Annotated[str, Path(pattern=JOB_ID_PATTERN.pattern)]
+QuestionIdPath = Annotated[str, Path(pattern=QUESTION_ID_PATTERN.pattern)]
 
 
 def _not_implemented(feature: str) -> HTTPException:
     """Return a 501 for stub endpoints."""
     return HTTPException(status_code=501, detail=f"Not yet implemented: {feature}")
-
-
-def _validate_job_id(job_id: str) -> None:
-    """Validate job_id path parameter format."""
-    if not _JOB_ID_PATTERN.match(job_id):
-        raise HTTPException(status_code=422, detail=f"Invalid job ID format: {job_id}")
-
-
-def _validate_question_id(question_id: str) -> None:
-    """Validate question_id path parameter format."""
-    if not _QUESTION_ID_PATTERN.match(question_id):
-        raise HTTPException(status_code=422, detail=f"Invalid question ID format: {question_id}")
 
 
 # --- Request Models ---
@@ -57,7 +47,7 @@ class FocusRequest(BaseModel):
     @field_validator("job_id")
     @classmethod
     def validate_job_id(cls, v: str) -> str:
-        if not _JOB_ID_PATTERN.match(v):
+        if not JOB_ID_PATTERN.match(v):
             raise ValueError(f"Job ID must match W-N format, got: {v}")
         return v
 
@@ -95,36 +85,31 @@ def create_app() -> FastAPI:
         raise _not_implemented("job creation and workflow execution")
 
     @app.get("/api/v1/jobs/{job_id}")
-    async def get_job(job_id: str) -> dict:
-        _validate_job_id(job_id)
+    async def get_job(job_id: JobIdPath) -> dict:
         raise _not_implemented("job detail retrieval")
 
     @app.post("/api/v1/jobs/{job_id}/stop")
-    async def stop_job(job_id: str, force: bool = False) -> dict:
-        _validate_job_id(job_id)
+    async def stop_job(job_id: JobIdPath, force: bool = False) -> dict:
         raise _not_implemented("job stop")
 
     @app.post("/api/v1/jobs/{job_id}/pause")
-    async def pause_job(job_id: str) -> dict:
-        _validate_job_id(job_id)
+    async def pause_job(job_id: JobIdPath) -> dict:
         raise _not_implemented("job pause")
 
     @app.post("/api/v1/jobs/{job_id}/resume")
-    async def resume_job(job_id: str) -> dict:
-        _validate_job_id(job_id)
+    async def resume_job(job_id: JobIdPath) -> dict:
         raise _not_implemented("job resume")
 
     @app.post("/api/v1/jobs/{job_id}/cancel")
-    async def cancel_job(job_id: str, revert_merged: bool = False) -> dict:
-        _validate_job_id(job_id)
+    async def cancel_job(job_id: JobIdPath, revert_merged: bool = False) -> dict:
         raise _not_implemented("job cancellation")
 
     # --- Questions (stubs) ---
 
     @app.post("/api/v1/jobs/{job_id}/questions/{question_id}/answer")
-    async def answer_question(job_id: str, question_id: str, request: AnswerRequest) -> dict:
-        _validate_job_id(job_id)
-        _validate_question_id(question_id)
+    async def answer_question(
+        job_id: JobIdPath, question_id: QuestionIdPath, request: AnswerRequest
+    ) -> dict:
         raise _not_implemented("question answering")
 
     # --- Focus (stubs) ---

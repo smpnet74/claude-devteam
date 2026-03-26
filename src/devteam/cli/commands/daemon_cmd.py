@@ -44,7 +44,7 @@ def start(
         raise typer.Exit(code=0)
 
     if foreground:
-        from devteam.daemon.process import acquire_pid_lock, release_pid_lock, write_port_file
+        from devteam.daemon.process import acquire_pid_lock, write_port_file
         from devteam.daemon.server import create_app
 
         import uvicorn
@@ -64,11 +64,9 @@ def start(
             app_instance = create_app()
             uvicorn.run(app_instance, host="127.0.0.1", port=port, log_level="warning")
         finally:
-            release_pid_lock(pid_path)
-            try:
-                port_path.unlink()
-            except FileNotFoundError:
-                pass
+            from devteam.daemon.process import _cleanup_if_owner
+
+            _cleanup_if_owner(pid_path, port_path, os.getpid())
     else:
         cmd = [
             sys.executable,
