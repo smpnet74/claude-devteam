@@ -129,6 +129,11 @@ class ReviewResult(BaseModel):
             raise ValueError("blocked verdict requires at least one comment explaining the blocker")
         return self
 
+    @property
+    def needs_revision(self) -> bool:
+        """Whether this review requires the engineer to revise their work."""
+        return self.verdict in ("needs_revision", "blocked")
+
 
 _TASK_ID_RE = re.compile(r"^T-[1-9]\d*$")
 

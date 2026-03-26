@@ -62,6 +62,7 @@ PEER_REVIEW_MAP_TEAM_A: dict[str, list[str]] = {
     "backend_engineer": ["frontend_engineer", "devops_engineer"],
     "frontend_engineer": ["backend_engineer"],
     "devops_engineer": ["backend_engineer"],
+    "planner_researcher_a": ["planner_researcher_b"],
 }
 
 PEER_REVIEW_MAP_TEAM_B: dict[str, list[str]] = {
@@ -69,6 +70,7 @@ PEER_REVIEW_MAP_TEAM_B: dict[str, list[str]] = {
     "infra_engineer": ["data_engineer", "tooling_engineer"],
     "tooling_engineer": ["infra_engineer", "cloud_engineer"],
     "cloud_engineer": ["infra_engineer"],
+    "planner_researcher_b": ["planner_researcher_a"],
 }
 
 # Set of valid reviewer roles (all values in both peer review maps).
@@ -175,9 +177,13 @@ def validate_decomposition(result: DecompositionResult) -> list[str]:
             continue  # already caught above
         if reviewer == task.assigned_to:
             errors.append(f"Task {task_id}: peer reviewer '{reviewer}' is the same as assignee")
-        valid_reviewers = (
-            VALID_REVIEWER_ROLES_TEAM_A if task.team == "a" else VALID_REVIEWER_ROLES_TEAM_B
-        )
+        if task.team == "a":
+            valid_reviewers = VALID_REVIEWER_ROLES_TEAM_A
+        elif task.team == "b":
+            valid_reviewers = VALID_REVIEWER_ROLES_TEAM_B
+        else:
+            errors.append(f"Task {task_id}: invalid team '{task.team}'")
+            continue
         if reviewer not in valid_reviewers:
             errors.append(
                 f"Task {task_id}: peer reviewer '{reviewer}' is not a valid "

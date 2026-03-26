@@ -490,3 +490,24 @@ class TestDecomposeInvokerFailure:
         routing = RoutingResult(path=RoutePath.FULL_PROJECT, reasoning="test")
         with pytest.raises(RuntimeError, match="CA decomposition invocation failed"):
             decompose("spec", "plan", routing, invoker)
+
+    def test_post_parse_validation_failure_for_non_assignable_role(self):
+        """CA returns valid structure but with executive role — fails validate_decomposition."""
+        invoker = MagicMock()
+        invoker.invoke.return_value = {
+            "tasks": [
+                {
+                    "id": "T-1",
+                    "description": "Do something",
+                    "assigned_to": "ceo",
+                    "team": "a",
+                    "depends_on": [],
+                    "pr_group": "feat/main",
+                },
+            ],
+            "peer_assignments": {},
+            "parallel_groups": [],
+        }
+        routing = RoutingResult(path=RoutePath.FULL_PROJECT, reasoning="test")
+        with pytest.raises(ValueError, match="Decomposition validation failed"):
+            decompose("spec", "plan", routing, invoker)

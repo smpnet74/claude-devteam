@@ -197,3 +197,13 @@ class TestRouteIntakeInvokerFailure:
         ctx = IntakeContext(prompt="test prompt")
         with pytest.raises(RuntimeError, match="CEO routing invocation failed"):
             route_intake(ctx, invoker)
+
+    def test_malformed_ceo_response_raises_validation_error(self):
+        """CEO returns valid JSON that doesn't match RoutingResult schema."""
+        from pydantic import ValidationError
+
+        invoker = MagicMock()
+        invoker.invoke.return_value = {"path": "banana", "reasoning": "test"}
+        ctx = IntakeContext(prompt="test prompt")
+        with pytest.raises(ValidationError):
+            route_intake(ctx, invoker)

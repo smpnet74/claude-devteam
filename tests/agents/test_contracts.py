@@ -174,6 +174,27 @@ class TestReviewResult:
             )
 
 
+class TestReviewResultNeedsRevision:
+    def test_needs_revision_true(self):
+        comment = ReviewComment(file="x.py", line=1, severity="error", comment="bad")
+        result = ReviewResult(verdict="needs_revision", comments=[comment], summary="fix it")
+        assert result.needs_revision is True
+
+    def test_blocked_needs_revision(self):
+        comment = ReviewComment(file="x.py", line=1, severity="error", comment="blocked")
+        result = ReviewResult(verdict="blocked", comments=[comment], summary="stuck")
+        assert result.needs_revision is True
+
+    def test_approved_no_revision(self):
+        result = ReviewResult(verdict="approved", comments=[], summary="good")
+        assert result.needs_revision is False
+
+    def test_approved_with_comments_no_revision(self):
+        comment = ReviewComment(file="x.py", line=1, severity="nitpick", comment="minor")
+        result = ReviewResult(verdict="approved_with_comments", comments=[comment], summary="ok")
+        assert result.needs_revision is False
+
+
 class TestReviewResultVerdictCommentsValidation:
     """Cross-field: verdicts that imply comments must have them."""
 
