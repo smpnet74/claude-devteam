@@ -94,6 +94,7 @@ merge_strategy = "squash"
 """
         )
         config = load_project_config(config_path)
+        assert config is not None
         assert config.project.name == "myapp"
         assert len(config.project.repos) == 2
         assert config.approval.merge == "manual"

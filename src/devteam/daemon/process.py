@@ -9,9 +9,9 @@ from __future__ import annotations
 
 import os
 import signal
+import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
 
 
 class DaemonAlreadyRunningError(Exception):
@@ -34,8 +34,8 @@ class DaemonState:
     """Current state of the daemon process."""
 
     running: bool
-    pid: Optional[int] = None
-    port: Optional[int] = None
+    pid: int | None = None
+    port: int | None = None
     stale: bool = False
 
 
@@ -53,7 +53,7 @@ def write_pid_file(pid_path: Path, pid: int) -> None:
     pid_path.write_text(f"{pid}\n")
 
 
-def read_pid_file(pid_path: Path) -> Optional[int]:
+def read_pid_file(pid_path: Path) -> int | None:
     """Read the daemon PID from the PID file.
 
     Returns None if the file doesn't exist or contains invalid data.
@@ -72,6 +72,10 @@ def acquire_pid_lock(pid_path: Path, new_pid: int) -> None:
 
     If a PID file exists with a running process, raises DaemonAlreadyRunningError.
     If the PID file is stale (process not running), overwrites it.
+
+    Note: This uses a check-then-write pattern that has a narrow TOCTOU race
+    window if two starts run simultaneously. For a single-user CLI tool this is
+    acceptable; a future hardening pass could use O_EXCL or fcntl.flock.
     """
     existing_pid = read_pid_file(pid_path)
     if existing_pid is not None and _is_process_alive(existing_pid):
@@ -93,7 +97,7 @@ def write_port_file(port_path: Path, port: int) -> None:
     port_path.write_text(f"{port}\n")
 
 
-def read_port_file(port_path: Path) -> Optional[int]:
+def read_port_file(port_path: Path) -> int | None:
     """Read the daemon port from the port file."""
     if not port_path.exists():
         return None
@@ -117,8 +121,15 @@ def get_daemon_state(pid_path: Path, port_path: Path) -> DaemonState:
     return DaemonState(running=True, pid=pid, port=port)
 
 
+_STOP_TIMEOUT_SECONDS = 5
+_STOP_POLL_INTERVAL = 0.1
+
+
 def stop_daemon(pid_path: Path, port_path: Path, *, force: bool = False) -> int:
     """Stop the running daemon process.
+
+    Sends SIGTERM (or SIGKILL with force=True), waits for the process to exit,
+    then cleans up PID and port files.
 
     Returns the PID of the stopped process.
     Raises DaemonNotRunningError if no daemon is running.
@@ -129,6 +140,11 @@ def stop_daemon(pid_path: Path, port_path: Path, *, force: bool = False) -> int:
 
     sig = signal.SIGKILL if force else signal.SIGTERM
     os.kill(pid, sig)
+
+    # Wait for process to exit before cleaning up files
+    deadline = time.monotonic() + _STOP_TIMEOUT_SECONDS
+    while _is_process_alive(pid) and time.monotonic() < deadline:
+        time.sleep(_STOP_POLL_INTERVAL)
 
     release_pid_lock(pid_path)
     try:

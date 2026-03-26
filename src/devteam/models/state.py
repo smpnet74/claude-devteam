@@ -6,9 +6,11 @@ functions enforce these rules and raise InvalidTransitionError on violations.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TypeVar
 
 from devteam.models.entities import JobStatus, PRStatus, QuestionStatus, TaskStatus
+
+_S = TypeVar("_S", JobStatus, TaskStatus, QuestionStatus, PRStatus)
 
 
 class InvalidTransitionError(Exception):
@@ -125,9 +127,9 @@ PR_TRANSITIONS: dict[PRStatus, set[PRStatus]] = {
 
 def _validate_transition(
     entity_type: str,
-    transitions: Any,
-    from_state: Any,
-    to_state: Any,
+    transitions: dict[_S, set[_S]],
+    from_state: _S,
+    to_state: _S,
 ) -> None:
     """Generic transition validator."""
     valid_targets = transitions.get(from_state, set())

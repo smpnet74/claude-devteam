@@ -9,6 +9,7 @@ from devteam.models.entities import (
     JobStatus,
     PRGroup,
     PRStatus,
+    Priority,
     Question,
     QuestionStatus,
     Task,
@@ -35,7 +36,7 @@ class TestJobModel:
 
     def test_job_default_priority(self) -> None:
         job = Job(job_id="W-1", title="Test")
-        assert job.priority == "normal"
+        assert job.priority == Priority.NORMAL
 
     def test_job_tracks_apps(self) -> None:
         job = Job(job_id="W-1", title="Test", apps=["api-service", "frontend"])

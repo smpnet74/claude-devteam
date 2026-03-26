@@ -2,22 +2,19 @@
 
 from pathlib import Path
 
-
 from devteam.daemon.database import (
     DatabaseConfig,
-    get_db_path,
     init_database,
 )
 
 
 class TestDatabaseConfig:
-    def test_default_db_path(self, tmp_devteam_home: Path) -> None:
-        db_path = get_db_path(tmp_devteam_home)
-        assert db_path == tmp_devteam_home / "devteam.sqlite"
-
-    def test_database_config(self, tmp_devteam_home: Path) -> None:
+    def test_db_path_via_property(self, tmp_devteam_home: Path) -> None:
         config = DatabaseConfig(devteam_home=tmp_devteam_home)
         assert config.db_path == tmp_devteam_home / "devteam.sqlite"
+
+    def test_db_url(self, tmp_devteam_home: Path) -> None:
+        config = DatabaseConfig(devteam_home=tmp_devteam_home)
         assert config.db_url.startswith("sqlite:///")
 
 

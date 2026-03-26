@@ -10,9 +10,9 @@ from __future__ import annotations
 
 import tomllib
 from pathlib import Path
-from typing import Optional
+from typing import Literal
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, ValidationError, model_validator
 
 
 # --- Config Section Models ---
@@ -39,18 +39,21 @@ class ModelsConfig(BaseModel):
     extraction: str = "haiku"
 
 
+ApprovalLevel = Literal["auto", "manual", "never"]
+
+
 class ApprovalConfig(BaseModel):
     """Approval policy configuration.
 
     push_to_main is a hard block -- always "never", cannot be overridden.
     """
 
-    commit: str = "auto"
-    push: str = "auto"
-    open_pr: str = "auto"
-    merge: str = "auto"
-    cleanup: str = "auto"
-    push_to_main: str = "never"
+    commit: ApprovalLevel = "auto"
+    push: ApprovalLevel = "auto"
+    open_pr: ApprovalLevel = "auto"
+    merge: ApprovalLevel = "auto"
+    cleanup: ApprovalLevel = "auto"
+    push_to_main: ApprovalLevel = "never"
 
     @model_validator(mode="after")
     def enforce_push_to_main_never(self) -> "ApprovalConfig":
@@ -96,11 +99,11 @@ class ProjectInfo(BaseModel):
 class ExecutionConfig(BaseModel):
     """Per-project execution commands."""
 
-    test_command: Optional[str] = None
-    lint_command: Optional[str] = None
-    build_command: Optional[str] = None
+    test_command: str | None = None
+    lint_command: str | None = None
+    build_command: str | None = None
     merge_strategy: str = "squash"
-    pr_template: Optional[str] = None
+    pr_template: str | None = None
 
 
 # --- Top-Level Config Models ---
@@ -127,6 +130,14 @@ class ProjectConfig(BaseModel):
     execution: ExecutionConfig = Field(default_factory=ExecutionConfig)
 
 
+class ConfigError(Exception):
+    """Raised when a configuration file is malformed or contains invalid values."""
+
+    def __init__(self, path: Path, reason: str) -> None:
+        self.path = path
+        super().__init__(f"Error loading {path}: {reason}")
+
+
 # --- Loading Functions ---
 
 
@@ -134,6 +145,7 @@ def load_global_config(config_path: Path) -> DevteamConfig:
     """Load global configuration from ~/.devteam/config.toml.
 
     Returns defaults if the file does not exist or is empty.
+    Raises ConfigError on malformed TOML or invalid values.
     """
     if not config_path.exists():
         return DevteamConfig()
@@ -142,14 +154,20 @@ def load_global_config(config_path: Path) -> DevteamConfig:
     if not text.strip():
         return DevteamConfig()
 
-    data = tomllib.loads(text)
-    return DevteamConfig(**data)
+    try:
+        data = tomllib.loads(text)
+        return DevteamConfig(**data)
+    except tomllib.TOMLDecodeError as e:
+        raise ConfigError(config_path, f"invalid TOML: {e}") from e
+    except ValidationError as e:
+        raise ConfigError(config_path, f"invalid config values: {e}") from e
 
 
-def load_project_config(config_path: Path) -> Optional[ProjectConfig]:
+def load_project_config(config_path: Path) -> ProjectConfig | None:
     """Load per-project configuration from devteam.toml.
 
     Returns None if the file does not exist.
+    Raises ConfigError on malformed TOML or invalid values.
     """
     if not config_path.exists():
         return None
@@ -158,13 +176,18 @@ def load_project_config(config_path: Path) -> Optional[ProjectConfig]:
     if not text.strip():
         return ProjectConfig()
 
-    data = tomllib.loads(text)
-    return ProjectConfig(**data)
+    try:
+        data = tomllib.loads(text)
+        return ProjectConfig(**data)
+    except tomllib.TOMLDecodeError as e:
+        raise ConfigError(config_path, f"invalid TOML: {e}") from e
+    except ValidationError as e:
+        raise ConfigError(config_path, f"invalid config values: {e}") from e
 
 
 def merge_configs(
     global_config: DevteamConfig,
-    project_config: Optional[ProjectConfig],
+    project_config: ProjectConfig | None,
 ) -> DevteamConfig:
     """Merge project config into global config.
 

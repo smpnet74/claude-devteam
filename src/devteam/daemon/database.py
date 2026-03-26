@@ -27,11 +27,6 @@ class DatabaseConfig:
         return f"sqlite:///{self.db_path}"
 
 
-def get_db_path(devteam_home: Path) -> Path:
-    """Return the path to the SQLite database."""
-    return devteam_home / "devteam.sqlite"
-
-
 def init_database(devteam_home: Path) -> DatabaseConfig:
     """Initialize the database configuration.
 

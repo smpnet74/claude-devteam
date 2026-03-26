@@ -12,7 +12,6 @@ from __future__ import annotations
 import re
 from datetime import datetime, timezone
 from enum import Enum
-from typing import Optional
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -61,6 +60,14 @@ class QuestionStatus(str, Enum):
     RESOLVED = "resolved"
 
 
+class Priority(str, Enum):
+    """Job/task priority levels."""
+
+    HIGH = "high"
+    NORMAL = "normal"
+    LOW = "low"
+
+
 class PRStatus(str, Enum):
     """PR lifecycle states."""
 
@@ -96,9 +103,9 @@ class Job(BaseModel):
     job_id: str
     title: str
     status: JobStatus = JobStatus.CREATED
-    priority: str = "normal"
-    spec_path: Optional[str] = None
-    plan_path: Optional[str] = None
+    priority: Priority = Priority.NORMAL
+    spec_path: str | None = None
+    plan_path: str | None = None
     apps: list[str] = Field(default_factory=list)
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
@@ -108,13 +115,6 @@ class Job(BaseModel):
     def validate_job_id(cls, v: str) -> str:
         if not JOB_ID_PATTERN.match(v):
             raise ValueError(f"Job ID must match W-N format, got: {v}")
-        return v
-
-    @field_validator("priority")
-    @classmethod
-    def validate_priority(cls, v: str) -> str:
-        if v not in ("high", "normal", "low"):
-            raise ValueError(f"Priority must be high/normal/low, got: {v}")
         return v
 
 
@@ -131,10 +131,10 @@ class Task(BaseModel):
     app: str
     status: TaskStatus = TaskStatus.QUEUED
     depends_on: list[str] = Field(default_factory=list)
-    pr_group: Optional[str] = None
-    peer_reviewer: Optional[str] = None
-    worktree_path: Optional[str] = None
-    session_id: Optional[str] = None
+    pr_group: str | None = None
+    peer_reviewer: str | None = None
+    worktree_path: str | None = None
+    session_id: str | None = None
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
@@ -163,10 +163,10 @@ class Question(BaseModel):
     question: str
     raised_by: str
     status: QuestionStatus = QuestionStatus.RAISED
-    answer: Optional[str] = None
-    answered_by: Optional[str] = None
+    answer: str | None = None
+    answered_by: str | None = None
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-    resolved_at: Optional[datetime] = None
+    resolved_at: datetime | None = None
 
     @field_validator("question_id")
     @classmethod
@@ -192,9 +192,9 @@ class PRGroup(BaseModel):
     app: str
     task_ids: list[str]
     status: PRStatus = PRStatus.BRANCH_CREATED
-    pr_number: Optional[int] = None
-    pr_url: Optional[str] = None
-    worktree_path: Optional[str] = None
+    pr_number: int | None = None
+    pr_url: str | None = None
+    worktree_path: str | None = None
     fix_iterations: int = 0
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
