@@ -16,6 +16,31 @@ def _not_implemented(feature: str) -> HTTPException:
     return HTTPException(status_code=501, detail=f"Not yet implemented: {feature}")
 
 
+# --- Request Models ---
+
+
+class StartJobRequest(BaseModel):
+    title: str
+    spec_path: str | None = None
+    plan_path: str | None = None
+    prompt: str | None = None
+    issue_url: str | None = None
+    priority: str = "normal"
+
+
+class AnswerRequest(BaseModel):
+    answer: str
+
+
+class FocusRequest(BaseModel):
+    job_id: str
+    shell_pid: int
+
+
+class ProjectAddRequest(BaseModel):
+    path: str
+
+
 def create_app() -> FastAPI:
     """Create and configure the FastAPI application."""
 
@@ -39,14 +64,6 @@ def create_app() -> FastAPI:
         return {"jobs": [], "agents_running": 0, "rate_limited": False}
 
     # --- Job Management (stubs) ---
-
-    class StartJobRequest(BaseModel):
-        title: str
-        spec_path: str | None = None
-        plan_path: str | None = None
-        prompt: str | None = None
-        issue_url: str | None = None
-        priority: str = "normal"
 
     @app.post("/api/v1/jobs")
     async def start_job(request: StartJobRequest) -> dict:
@@ -74,27 +91,17 @@ def create_app() -> FastAPI:
 
     # --- Questions (stubs) ---
 
-    class AnswerRequest(BaseModel):
-        answer: str
-
     @app.post("/api/v1/jobs/{job_id}/questions/{question_id}/answer")
     async def answer_question(job_id: str, question_id: str, request: AnswerRequest) -> dict:
         raise _not_implemented("question answering")
 
     # --- Focus (stubs) ---
 
-    class FocusRequest(BaseModel):
-        job_id: str
-        shell_pid: int
-
     @app.post("/api/v1/focus")
     async def set_focus(request: FocusRequest) -> dict:
         raise _not_implemented("focus management")
 
     # --- Project Management (stubs) ---
-
-    class ProjectAddRequest(BaseModel):
-        path: str
 
     @app.post("/api/v1/projects")
     async def add_project(request: ProjectAddRequest) -> dict:

@@ -44,9 +44,9 @@ def start(
         import uvicorn
 
         acquire_pid_lock(pid_path, os.getpid())
-        write_port_file(port_path, port)
         typer.echo(f"Starting daemon on port {port} (foreground, PID {os.getpid()})")
         try:
+            write_port_file(port_path, port)
             app_instance = create_app()
             uvicorn.run(app_instance, host="127.0.0.1", port=port, log_level="warning")
         finally:

@@ -51,7 +51,7 @@ class TestInitCommand:
             runner.invoke(app, ["init"])
             result = runner.invoke(app, ["init"])
         assert result.exit_code == 0
-        assert "already" in result.output.lower() or result.exit_code == 0
+        assert "already" in result.output.lower()
 
 
 class TestDaemonCommands:
@@ -91,6 +91,11 @@ class TestJobCommands:
 
     def test_start_stub(self) -> None:
         result = runner.invoke(app, ["start", "--spec", "/tmp/spec.md", "--plan", "/tmp/plan.md"])
+        assert result.exit_code == 0
+        assert "not yet implemented" in result.output.lower()
+
+    def test_start_with_plan_only(self) -> None:
+        result = runner.invoke(app, ["start", "--plan", "/tmp/plan.md"])
         assert result.exit_code == 0
         assert "not yet implemented" in result.output.lower()
 

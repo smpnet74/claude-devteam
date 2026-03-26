@@ -128,3 +128,26 @@ class TestPRTransitions:
     def test_cannot_skip_ci(self) -> None:
         with pytest.raises(InvalidTransitionError):
             validate_pr_transition(PRStatus.PR_OPENED, PRStatus.MERGED)
+
+    def test_canceled_from_early_stages(self) -> None:
+        cancelable = [
+            PRStatus.BRANCH_CREATED,
+            PRStatus.PR_OPENED,
+            PRStatus.WAITING_ON_CI,
+            PRStatus.CI_FAILED,
+            PRStatus.FIXING,
+        ]
+        for status in cancelable:
+            validate_pr_transition(status, PRStatus.CANCELED)
+
+    def test_cannot_cancel_merged(self) -> None:
+        with pytest.raises(InvalidTransitionError):
+            validate_pr_transition(PRStatus.MERGED, PRStatus.CANCELED)
+
+    def test_cannot_cancel_cleaned_up(self) -> None:
+        with pytest.raises(InvalidTransitionError):
+            validate_pr_transition(PRStatus.CLEANED_UP, PRStatus.CANCELED)
+
+    def test_canceled_is_terminal(self) -> None:
+        with pytest.raises(InvalidTransitionError):
+            validate_pr_transition(PRStatus.CANCELED, PRStatus.BRANCH_CREATED)

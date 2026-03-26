@@ -112,16 +112,17 @@ QUESTION_TRANSITIONS: dict[QuestionStatus, set[QuestionStatus]] = {
 #                                                               fixing -> escalated_to_human
 
 PR_TRANSITIONS: dict[PRStatus, set[PRStatus]] = {
-    PRStatus.BRANCH_CREATED: {PRStatus.PR_OPENED},
-    PRStatus.PR_OPENED: {PRStatus.WAITING_ON_CI},
-    PRStatus.WAITING_ON_CI: {PRStatus.CI_PASSED, PRStatus.CI_FAILED},
+    PRStatus.BRANCH_CREATED: {PRStatus.PR_OPENED, PRStatus.CANCELED},
+    PRStatus.PR_OPENED: {PRStatus.WAITING_ON_CI, PRStatus.CANCELED},
+    PRStatus.WAITING_ON_CI: {PRStatus.CI_PASSED, PRStatus.CI_FAILED, PRStatus.CANCELED},
     PRStatus.CI_PASSED: {PRStatus.READY_FOR_MERGE},
-    PRStatus.CI_FAILED: {PRStatus.FIXING},
-    PRStatus.FIXING: {PRStatus.WAITING_ON_CI, PRStatus.ESCALATED_TO_HUMAN},
+    PRStatus.CI_FAILED: {PRStatus.FIXING, PRStatus.CANCELED},
+    PRStatus.FIXING: {PRStatus.WAITING_ON_CI, PRStatus.ESCALATED_TO_HUMAN, PRStatus.CANCELED},
     PRStatus.READY_FOR_MERGE: {PRStatus.MERGED},
     PRStatus.MERGED: {PRStatus.CLEANED_UP},
     PRStatus.CLEANED_UP: set(),
     PRStatus.ESCALATED_TO_HUMAN: set(),
+    PRStatus.CANCELED: set(),
 }
 
 

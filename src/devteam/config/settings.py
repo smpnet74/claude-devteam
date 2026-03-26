@@ -120,6 +120,7 @@ class DevteamConfig(BaseModel):
     rate_limit: RateLimitConfig = Field(default_factory=RateLimitConfig)
     pr: PRConfig = Field(default_factory=PRConfig)
     git: GitConfig = Field(default_factory=GitConfig)
+    execution: ExecutionConfig = Field(default_factory=ExecutionConfig)
 
 
 class ProjectConfig(BaseModel):
@@ -150,7 +151,10 @@ def load_global_config(config_path: Path) -> DevteamConfig:
     if not config_path.exists():
         return DevteamConfig()
 
-    text = config_path.read_text()
+    try:
+        text = config_path.read_text()
+    except OSError as e:
+        raise ConfigError(config_path, f"could not read file: {e}") from e
     if not text.strip():
         return DevteamConfig()
 
@@ -172,7 +176,10 @@ def load_project_config(config_path: Path) -> ProjectConfig | None:
     if not config_path.exists():
         return None
 
-    text = config_path.read_text()
+    try:
+        text = config_path.read_text()
+    except OSError as e:
+        raise ConfigError(config_path, f"could not read file: {e}") from e
     if not text.strip():
         return ProjectConfig()
 
@@ -203,5 +210,10 @@ def merge_configs(
     project_approval = project_config.approval.model_dump(exclude_defaults=True)
     for key, value in project_approval.items():
         merged_data["approval"][key] = value
+
+    # Merge execution overrides from project
+    project_execution = project_config.execution.model_dump(exclude_defaults=True)
+    for key, value in project_execution.items():
+        merged_data["execution"][key] = value
 
     return DevteamConfig(**merged_data)

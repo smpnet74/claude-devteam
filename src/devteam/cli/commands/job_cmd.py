@@ -27,6 +27,8 @@ def register_job_commands(app: typer.Typer) -> None:
         """Start a new development job."""
         if spec:
             typer.echo(f"Not yet implemented: start job from spec ({spec})")
+        elif plan:
+            typer.echo(f"Not yet implemented: start job from plan ({plan})")
         elif prompt:
             typer.echo("Not yet implemented: start job from prompt")
         elif issue:

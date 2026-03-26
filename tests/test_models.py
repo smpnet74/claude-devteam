@@ -93,6 +93,90 @@ class TestTaskModel:
         assert task.pr_group == "feat/user-auth"
 
 
+class TestTaskJobIdValidation:
+    def test_task_rejects_invalid_job_id(self) -> None:
+        with pytest.raises(ValueError):
+            Task(
+                task_id="T-1",
+                job_id="invalid",
+                description="x",
+                assigned_to="backend",
+                app="api",
+            )
+
+    def test_task_rejects_empty_job_id(self) -> None:
+        with pytest.raises(ValueError):
+            Task(
+                task_id="T-1",
+                job_id="",
+                description="x",
+                assigned_to="backend",
+                app="api",
+            )
+
+    def test_task_rejects_wrong_prefix_job_id(self) -> None:
+        with pytest.raises(ValueError):
+            Task(
+                task_id="T-1",
+                job_id="T-1",
+                description="x",
+                assigned_to="backend",
+                app="api",
+            )
+
+    def test_task_accepts_valid_job_id(self) -> None:
+        task = Task(
+            task_id="T-1",
+            job_id="W-42",
+            description="x",
+            assigned_to="backend",
+            app="api",
+        )
+        assert task.job_id == "W-42"
+
+
+class TestQuestionJobIdValidation:
+    def test_question_rejects_invalid_job_id(self) -> None:
+        with pytest.raises(ValueError):
+            Question(
+                question_id="Q-1",
+                job_id="invalid",
+                task_id="T-1",
+                question="?",
+                raised_by="backend",
+            )
+
+    def test_question_rejects_empty_job_id(self) -> None:
+        with pytest.raises(ValueError):
+            Question(
+                question_id="Q-1",
+                job_id="",
+                task_id="T-1",
+                question="?",
+                raised_by="backend",
+            )
+
+    def test_question_rejects_wrong_prefix_job_id(self) -> None:
+        with pytest.raises(ValueError):
+            Question(
+                question_id="Q-1",
+                job_id="T-1",
+                task_id="T-1",
+                question="?",
+                raised_by="backend",
+            )
+
+    def test_question_accepts_valid_job_id(self) -> None:
+        q = Question(
+            question_id="Q-1",
+            job_id="W-99",
+            task_id="T-1",
+            question="?",
+            raised_by="backend",
+        )
+        assert q.job_id == "W-99"
+
+
 class TestQuestionModel:
     def test_create_question(self) -> None:
         question = Question(

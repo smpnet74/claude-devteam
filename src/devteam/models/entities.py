@@ -81,6 +81,7 @@ class PRStatus(str, Enum):
     MERGED = "merged"
     CLEANED_UP = "cleaned_up"
     ESCALATED_TO_HUMAN = "escalated_to_human"
+    CANCELED = "canceled"
 
 
 # --- ID Validation Patterns ---
@@ -138,6 +139,13 @@ class Task(BaseModel):
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
+    @field_validator("job_id")
+    @classmethod
+    def validate_job_id(cls, v: str) -> str:
+        if not JOB_ID_PATTERN.match(v):
+            raise ValueError(f"Job ID must match W-N format, got: {v}")
+        return v
+
     @field_validator("task_id")
     @classmethod
     def validate_task_id(cls, v: str) -> str:
@@ -167,6 +175,13 @@ class Question(BaseModel):
     answered_by: str | None = None
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     resolved_at: datetime | None = None
+
+    @field_validator("job_id")
+    @classmethod
+    def validate_job_id(cls, v: str) -> str:
+        if not JOB_ID_PATTERN.match(v):
+            raise ValueError(f"Job ID must match W-N format, got: {v}")
+        return v
 
     @field_validator("question_id")
     @classmethod

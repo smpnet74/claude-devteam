@@ -22,7 +22,7 @@ def tmp_devteam_home(tmp_path: Path) -> Path:
 
 @pytest.fixture
 def tmp_project_dir(tmp_path: Path) -> Path:
-    """Create a temporary project directory with a devteam.toml."""
+    """Create a temporary project directory."""
     project = tmp_path / "myproject"
     project.mkdir()
     return project

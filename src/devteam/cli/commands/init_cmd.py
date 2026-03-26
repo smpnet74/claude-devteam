@@ -76,7 +76,11 @@ def init_devteam_home(home: Path) -> bool:
 def init() -> None:
     """Initialize devteam — creates ~/.devteam/ and default configuration."""
     home = get_devteam_home()
-    created = init_devteam_home(home)
+    try:
+        created = init_devteam_home(home)
+    except OSError as e:
+        typer.echo(f"Error: failed to initialize devteam at {home}: {e}")
+        raise typer.Exit(code=1)
     if created:
         typer.echo(f"Initialized devteam at {home}")
     else:
