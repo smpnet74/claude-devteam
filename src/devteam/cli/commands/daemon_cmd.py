@@ -1,0 +1,107 @@
+"""devteam daemon — start/stop/status for the daemon process."""
+
+from __future__ import annotations
+
+import os
+import subprocess
+import sys
+from pathlib import Path
+
+import typer
+
+from devteam.daemon.process import (
+    DaemonNotRunningError,
+    get_daemon_state,
+    stop_daemon,
+)
+
+app = typer.Typer(help="Manage the devteam daemon process.")
+
+
+def get_devteam_home() -> Path:
+    """Return the devteam home directory path."""
+    return Path.home() / ".devteam"
+
+
+@app.command()
+def start(
+    port: int = typer.Option(7432, help="Port to listen on"),
+    foreground: bool = typer.Option(False, "--foreground", "-f", help="Run in foreground"),
+) -> None:
+    """Start the devteam daemon."""
+    home = get_devteam_home()
+    pid_path = home / "daemon.pid"
+    port_path = home / "daemon.port"
+
+    state = get_daemon_state(pid_path, port_path)
+    if state.running:
+        typer.echo(f"Daemon already running (PID {state.pid}, port {state.port})")
+        raise typer.Exit(code=0)
+
+    if foreground:
+        from devteam.daemon.process import acquire_pid_lock, release_pid_lock, write_port_file
+        from devteam.daemon.server import create_app
+
+        import uvicorn
+
+        acquire_pid_lock(pid_path, os.getpid())
+        write_port_file(port_path, port)
+        typer.echo(f"Starting daemon on port {port} (foreground, PID {os.getpid()})")
+        try:
+            app_instance = create_app()
+            uvicorn.run(app_instance, host="127.0.0.1", port=port, log_level="warning")
+        finally:
+            release_pid_lock(pid_path)
+            try:
+                port_path.unlink()
+            except FileNotFoundError:
+                pass
+    else:
+        cmd = [
+            sys.executable,
+            "-m",
+            "devteam.cli.commands.daemon_cmd",
+            "--port",
+            str(port),
+        ]
+        proc = subprocess.Popen(
+            cmd,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+        typer.echo(f"Daemon starting (PID {proc.pid}, port {port})")
+
+
+@app.command()
+def stop(
+    force: bool = typer.Option(False, "--force", help="Force kill"),
+) -> None:
+    """Stop the devteam daemon."""
+    home = get_devteam_home()
+    pid_path = home / "daemon.pid"
+    port_path = home / "daemon.port"
+
+    try:
+        pid = stop_daemon(pid_path, port_path, force=force)
+        typer.echo(f"Daemon stopped (PID {pid})")
+    except DaemonNotRunningError:
+        typer.echo("Daemon is not running.")
+        raise typer.Exit(code=1)
+
+
+@app.command()
+def status() -> None:
+    """Show daemon status."""
+    home = get_devteam_home()
+    pid_path = home / "daemon.pid"
+    port_path = home / "daemon.port"
+
+    state = get_daemon_state(pid_path, port_path)
+
+    if state.running:
+        typer.echo(f"Daemon is running (PID {state.pid}, port {state.port})")
+    elif state.stale:
+        typer.echo(f"Daemon is not running (stale PID file: {state.pid})")
+    else:
+        typer.echo("Daemon is not running.")
