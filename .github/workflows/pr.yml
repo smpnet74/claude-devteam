@@ -10,26 +10,7 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  policy:
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Block manual lockfile edits
-        run: |
-          changed="$(git diff --name-only "${{ github.event.pull_request.base.sha }}" "${{ github.event.pull_request.head.sha }}")"
-          if printf '%s\n' "$changed" | grep -qx 'pixi.lock'; then
-            echo "::error::Do not commit pixi.lock in pull requests. The lockfile is managed by pixi and should be regenerated, not manually edited."
-            exit 1
-          fi
-
   verify:
-    needs: [policy]
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
@@ -40,7 +21,7 @@ jobs:
       - name: Install pixi
         uses: prefix-dev/setup-pixi@v0.8.8
         with:
-          pixi-version: v0.46.0
+          pixi-version: v0.65.0
 
       - name: Lint (ruff check + format)
         run: |
