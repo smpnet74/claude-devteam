@@ -6,6 +6,7 @@ from pathlib import Path
 
 import typer
 
+from devteam.agents.template_manager import copy_agent_templates
 from devteam.cli.common import get_devteam_home
 
 app = typer.Typer(help="Initialize devteam.")
@@ -68,6 +69,10 @@ def init_devteam_home(home: Path) -> bool:
     config_path = home / "config.toml"
     if not config_path.exists():
         config_path.write_text(DEFAULT_CONFIG)
+
+    # Copy bundled agent templates to ~/.devteam/agents/ (skip existing customizations)
+    agents_dir = home / "agents"
+    copy_agent_templates(agents_dir, overwrite=False)
 
     return created
 

@@ -66,7 +66,6 @@ reviews:
   # PATH FILTERS
   # ---------------------------------------------------------------------------
   path_filters:
-    - "!pixi.lock"
     - "!.pixi/**"
 
   # ---------------------------------------------------------------------------
@@ -82,7 +81,7 @@ reviews:
     - path: "src/devteam/daemon/**"
       instructions: >
         FastAPI daemon on localhost:7432 with singleton PID-file locking. Verify graceful shutdown, signal handling, and that the
-        daemon.pid/daemon.port files are cleaned up on stop. Check uvicorn configuration and error responses.
+        daemon.pid/daemon.port files are cleaned up on stop. Check generation-aware cleanup guards pid ownership before unlinking.
 
     - path: "src/devteam/cli/**"
       instructions: >
@@ -96,8 +95,13 @@ reviews:
 
     - path: "src/devteam/agents/**"
       instructions: >
-        Agent definitions and invoker wrapping Claude Agent SDK. Verify agent .md templates have correct model tier (opus/sonnet/haiku)
-        and tool access. Check invoker handles rate limits, timeouts, and returns structured output.
+        Agent registry, invoker, and contracts. Verify SDK call uses query(prompt=, options=QueryOptions(...)). Check invoker fails
+        closed on unmapped roles. Verify contract cross-field validators enforce invariants (comments for revision, DAG integrity).
+
+    - path: "src/devteam/templates/**"
+      instructions: >
+        Agent definition .md templates with YAML frontmatter. Verify model tiers (opus/sonnet/haiku) match the design spec. Check
+        tool access is appropriate per role. Validate prompt bodies define identity, expertise, and completion protocol.
 
     - path: "src/devteam/knowledge/**"
       instructions: >
@@ -112,17 +116,17 @@ reviews:
     - path: "src/devteam/config/**"
       instructions: >
         Configuration from ~/.devteam/config.toml (global) merged with per-project devteam.toml. Verify push_to_main is always forced
-        to "never" regardless of config. Check that project settings properly override global defaults.
+        to "never" regardless of config. Check that project settings properly override global defaults via exclude_unset merge.
 
     - path: "tests/**"
       instructions: >
         Tests use pytest + pytest-asyncio. Verify tests don't depend on external services (SurrealDB uses mem://, git uses tmp repos,
-        HTTP uses httpx AsyncClient). Check that state machine tests cover invalid transition rejection.
+        HTTP uses httpx AsyncClient, SDK uses mocks). Check that validators are tested for both valid and invalid inputs.
 
     - path: ".github/workflows/**"
       instructions: >
-        CI pipelines run on every PR: policy check (lockfile), ruff (lint + format), pyright (type check), pytest. Verify pixi
-        environment setup is correct. Check timeout values are reasonable.
+        CI runs on every PR: ruff (lint + format), pyright (type check), pytest. Verify pixi environment setup and version match
+        local lockfile. Check timeout values are reasonable.
 
   # ---------------------------------------------------------------------------
   # AUTO REVIEW
@@ -130,7 +134,7 @@ reviews:
   auto_review:
     enabled: true
     auto_incremental_review: true
-    auto_pause_after_reviewed_commits: 5
+    auto_pause_after_reviewed_commits: 10
     drafts: false
     ignore_title_keywords:
       - "WIP"
@@ -175,6 +179,11 @@ reviews:
         instructions: >
           If git/ changed, verify every side-effecting function follows the check-before-act pattern: check if the effect already
           happened before performing it. This is required for safe crash recovery and retry.
+      - name: "Contract Validation"
+        mode: "warning"
+        instructions: >
+          If agents/contracts.py changed, verify cross-field validators enforce all invariants: question required when blocked,
+          comments required for revision verdicts, DAG cycle detection, no duplicate task IDs, no dangling dependencies.
 
   # ---------------------------------------------------------------------------
   # FINISHING TOUCHES
