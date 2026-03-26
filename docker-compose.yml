@@ -1,0 +1,13 @@
+services:
+  surrealdb:
+    image: surrealdb/surrealdb:v3.0.4
+    container_name: devteam-surrealdb
+    ports:
+      - "8000:8000"
+    volumes:
+      - surrealdb-data:/data
+    command: start --user root --pass root file:/data/devteam.db
+    restart: unless-stopped
+
+volumes:
+  surrealdb-data:

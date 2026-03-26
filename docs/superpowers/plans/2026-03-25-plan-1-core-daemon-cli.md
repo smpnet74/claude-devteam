@@ -6,7 +6,7 @@
 
 **Architecture:** A FastAPI daemon process runs on localhost:7432 with singleton PID-file locking. The Typer CLI communicates with the daemon over HTTP (httpx). Entity models (Job, Task, Question, PRGroup) use enum-based state machines with validated transitions stored via DBOS/SQLite. Configuration is loaded from `~/.devteam/config.toml` (global) and per-project `devteam.toml` files using tomllib, with project settings overriding global defaults.
 
-**Tech Stack:** Python 3.11+, FastAPI, Uvicorn, Typer, DBOS (SQLite), httpx, tomllib/tomli, Pydantic
+**Tech Stack:** Python 3.13, FastAPI, Uvicorn, Typer, DBOS (SQLite), httpx, tomllib, Pydantic
 
 ---
 
@@ -42,9 +42,10 @@ pixi init -c conda-forge --format pyproject
 
 Run:
 ```bash
-pixi add "python>=3.11,<3.13"
-pixi add --pypi "dbos>=1.3,<2" "fastapi>=0.115,<1" "uvicorn[standard]>=0.34,<1" "typer>=0.15,<1" "httpx>=0.28,<1" "pydantic>=2.10,<3" "tomli>=2.2,<3"
-pixi add --pypi --feature test "pytest>=8,<9" "pytest-asyncio>=0.25,<1" "httpx>=0.28,<1"
+pixi add "python>=3.13,<3.14"
+pixi add --pypi "dbos>=2.13,<3" "fastapi>=0.135,<1" "uvicorn[standard]>=0.42,<1" "typer>=0.24,<1" "httpx>=0.28,<1" "pydantic>=2.12,<3" "tomli>=2.2,<3"
+pixi add --pypi --feature test "pytest>=8,<9" "pytest-asyncio>=1.3,<2" "httpx>=0.28,<1"
+pixi add --pypi --feature dev "ruff>=0.15,<1" "pyright>=1.1,<2"
 ```
 
 - [ ] **Step 3: Create the package directory structure**
@@ -167,7 +168,7 @@ Ensure `pyproject.toml` contains the correct `[project]` metadata and `[project.
 name = "claude-devteam"
 version = "0.1.0"
 description = "Durable AI Development Team Orchestrator"
-requires-python = ">=3.11"
+requires-python = ">=3.13"
 
 [project.scripts]
 devteam = "devteam.cli.main:main"
@@ -1181,7 +1182,7 @@ class KnowledgeConfig(BaseModel):
     """Knowledge system configuration."""
 
     embedding_model: str = "nomic-embed-text"
-    surrealdb_path: str = "file://~/.devteam/knowledge"
+    surrealdb_url: str = "ws://localhost:8000"
     cross_project_sharing: str = "layered"
 
 
@@ -1996,7 +1997,7 @@ push_to_main = "never"
 
 [knowledge]
 embedding_model = "nomic-embed-text"
-surrealdb_path = "file://~/.devteam/knowledge"
+surrealdb_url = "ws://localhost:8000"
 cross_project_sharing = "layered"
 
 [rate_limit]

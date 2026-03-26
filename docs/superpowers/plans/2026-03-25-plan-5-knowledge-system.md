@@ -4,9 +4,9 @@
 
 **Goal:** Build the institutional knowledge system using SurrealDB and Ollama for team learning that compounds across projects.
 
-**Architecture:** SurrealDB runs embedded (file-backed via `Surreal("file://...")`) storing knowledge entries with 768-dimension vector embeddings, HNSW index for similarity search, and graph relationships for knowledge evolution. Ollama generates embeddings locally via nomic-embed-text. A haiku-powered extractor runs after every agent step to capture reusable learnings. Agents access knowledge through two mechanisms: a pre-injected memory index (topic summary) and an on-demand `query_knowledge` tool with scope filtering. The system degrades gracefully — SurrealDB unavailable means empty index and skipped extraction, never workflow failure.
+**Architecture:** SurrealDB runs as a Docker container (`surrealdb/surrealdb:v3.0.4`) with file-backed persistence via a Docker volume. The Python SDK (`surrealdb>=1.0.8,<2`) connects over WebSocket at `ws://localhost:8000`. Knowledge entries have 768-dimension vector embeddings, HNSW index for similarity search, and graph relationships for knowledge evolution. Ollama generates embeddings locally via nomic-embed-text. A haiku-powered extractor runs after every agent step to capture reusable learnings. Agents access knowledge through two mechanisms: a pre-injected memory index (topic summary) and an on-demand `query_knowledge` tool with scope filtering. The system degrades gracefully — SurrealDB unavailable means empty index and skipped extraction, never workflow failure.
 
-**Tech Stack:** Python 3.11+, surrealdb (Python SDK), httpx (Ollama HTTP API), Pydantic, pytest, pytest-asyncio
+**Tech Stack:** Python 3.13, surrealdb>=1.0.8 (Python SDK), SurrealDB v3.0.4 (Docker), httpx (Ollama HTTP API), Pydantic, pytest, pytest-asyncio
 
 **Assumes:** Plan 1 (daemon, CLI, entities) and Plan 2 (agent definitions, invoker) are complete. Independent of Plans 3-4.
 
@@ -20,7 +20,13 @@
 - Create: `tests/knowledge/__init__.py`
 - Create: `tests/knowledge/test_store.py`
 
-- [ ] **Step 1 (2 min): Create knowledge package structure**
+- [ ] **Step 1a (1 min): Add SurrealDB dependency**
+
+```bash
+pixi add --pypi "surrealdb>=1.0.8,<2"
+```
+
+- [ ] **Step 1b (2 min): Create knowledge package structure**
 
 ```bash
 mkdir -p src/devteam/knowledge
@@ -216,7 +222,7 @@ class KnowledgeStore:
 
     Args:
         url: SurrealDB connection URL. Use "mem://" for in-memory (testing)
-             or "file:///path/to/dir" for file-backed persistence.
+             or "ws://localhost:8000" for the Docker-hosted server.
     """
 
     def __init__(self, url: str) -> None:
@@ -2349,7 +2355,7 @@ def get_store():
     """Get the KnowledgeStore instance. Overridden in tests."""
     from devteam.knowledge.store import KnowledgeStore
 
-    store = KnowledgeStore("file://~/.devteam/knowledge")
+    store = KnowledgeStore("ws://localhost:8000")
     asyncio.get_event_loop().run_until_complete(store.connect())
     return store
 

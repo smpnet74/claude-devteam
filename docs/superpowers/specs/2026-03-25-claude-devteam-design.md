@@ -40,7 +40,7 @@ claude-devteam is a Python CLI application that orchestrates a team of 16 specia
 | Orchestrator | DBOS (Python SDK) | Durable workflow execution, crash recovery, queues |
 | Workflow persistence | SQLite (via DBOS) | Workflow state, step results, execution trace |
 | Agent invocation | Claude Agent SDK (Python) | Programmatic Claude session management |
-| Knowledge store | SurrealDB (embedded, file-backed) | Institutional memory — vector search + graph relationships |
+| Knowledge store | SurrealDB v3.0.4 (Docker, file-backed) | Institutional memory — vector search + graph relationships |
 | Embeddings | Ollama + nomic-embed-text | Local embedding generation, zero external API dependency |
 | CLI | Python (Click or Typer) | User interface — `devteam` commands |
 | Git isolation | Git worktrees | Per-task/PR-group isolated working directories |
@@ -62,7 +62,7 @@ claude-devteam is a Python CLI application that orchestrates a team of 16 specia
 |  +- Queue Manager (concurrency, priority)          |
 |  +- Rate Limit Handler (reactive backoff)          |
 +------------------------+--------------------------+
-|  SQLite (DBOS)         |  SurrealDB (Knowledge)   |
+|  SQLite (DBOS)         |  SurrealDB (Docker)      |
 |  - workflow state      |  - shared team knowledge  |
 |  - step results        |  - per-agent expertise    |
 |  - execution trace     |  - project learnings      |
@@ -71,15 +71,16 @@ claude-devteam is a Python CLI application that orchestrates a team of 16 specia
 +------------------------+--------------------------+
 ```
 
+SurrealDB runs as a Docker container (`surrealdb/surrealdb:v3.0.4`) with file-backed persistence via a Docker volume. The Python SDK (`surrealdb>=1.0.8,<2`) connects over WebSocket at `ws://localhost:8000`. See `docker-compose.yml` in the repo root.
+
 ### Global Daemon Model
 
-The devteam daemon is a single long-running process on the operator's machine. All state lives in `~/.devteam/`:
+The devteam daemon is a single long-running process on the operator's machine. DBOS/SQLite state lives in `~/.devteam/`. SurrealDB state lives in a Docker volume (`devteam-surrealdb`).
 
 ```
 ~/.devteam/
   config.toml          # global configuration
   devteam.sqlite       # DBOS workflow state
-  knowledge/           # SurrealDB embedded store
   agents/              # agent definition templates
   projects/            # registered project clones (OSS)
   logs/                # agent output logs (W-{id}/T-{id}.log)
@@ -1282,7 +1283,7 @@ push_to_main = "never"     # hard block
 
 [knowledge]
 embedding_model = "nomic-embed-text"
-surrealdb_path = "file://~/.devteam/knowledge"
+surrealdb_url = "ws://localhost:8000"
 cross_project_sharing = "layered"  # "layered" | "all" | "none"
 
 [rate_limit]
@@ -1385,7 +1386,7 @@ Every agent invocation, every review decision, every human action (comment, answ
 
 ### Prerequisites
 
-- Python 3.11+
+- Python 3.13
 - Claude CLI authenticated (`claude --version`)
 - Ollama running with nomic-embed-text (`ollama pull nomic-embed-text`)
 - Git

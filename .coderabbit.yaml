@@ -1,0 +1,363 @@
+# yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
+# CodeRabbit Configuration — claude-devteam
+# Durable AI Development Team Orchestrator
+#
+# In PR, comment "@coderabbitai configuration" to dump the active config
+
+# =============================================================================
+# GLOBAL SETTINGS
+# =============================================================================
+
+language: "en-US"
+
+tone_instructions: >
+  Focus on Python correctness, type safety, Pydantic model consistency,
+  DBOS workflow durability patterns, and state machine invariants.
+  Flag missing error handling in side-effecting operations.
+
+early_access: false
+enable_free_tier: true
+
+# =============================================================================
+# REVIEWS
+# =============================================================================
+
+reviews:
+  profile: "assertive"
+  request_changes_workflow: false
+  high_level_summary: true
+  high_level_summary_instructions: ""
+  high_level_summary_placeholder: "@coderabbitai summary"
+  high_level_summary_in_walkthrough: false
+
+  auto_title_placeholder: "@coderabbitai"
+  auto_title_instructions: >
+    Use conventional commit format: <type>: <description>.
+    Types: feat, fix, docs, chore, refactor, test, style, perf, ci.
+    Keep under 70 characters. Lowercase after the colon.
+
+  review_status: true
+  review_details: false
+  commit_status: true
+  fail_commit_status: false
+  collapse_walkthrough: false
+  changed_files_summary: true
+  sequence_diagrams: true
+  estimate_code_review_effort: true
+  poem: false
+  in_progress_fortune: true
+  enable_prompt_for_ai_agents: true
+  disable_cache: false
+
+  assess_linked_issues: true
+  related_issues: true
+  related_prs: true
+
+  suggested_labels: true
+  labeling_instructions: []
+  auto_apply_labels: false
+
+  suggested_reviewers: true
+  auto_assign_reviewers: false
+
+  abort_on_close: true
+
+  # ---------------------------------------------------------------------------
+  # PATH FILTERS
+  # ---------------------------------------------------------------------------
+  path_filters:
+    - "!pixi.lock"
+    - "!.pixi/**"
+
+  # ---------------------------------------------------------------------------
+  # PATH INSTRUCTIONS
+  # All instructions fields MUST stay under 250 characters.
+  # ---------------------------------------------------------------------------
+  path_instructions:
+    - path: "src/devteam/models/**"
+      instructions: >
+        Entity models with enum-based state machines. Verify state transitions are validated — no invalid jumps. Check Pydantic
+        model_validator usage. Ensure JobStatus/TaskStatus/PRStatus enums are the single source of truth (never redefined elsewhere).
+
+    - path: "src/devteam/daemon/**"
+      instructions: >
+        FastAPI daemon on localhost:7432 with singleton PID-file locking. Verify graceful shutdown, signal handling, and that the
+        daemon.pid/daemon.port files are cleaned up on stop. Check uvicorn configuration and error responses.
+
+    - path: "src/devteam/cli/**"
+      instructions: >
+        Typer CLI communicates with daemon over HTTP (httpx). Verify all commands handle daemon-not-running gracefully. Check that
+        read-only commands (status, trace) can query SQLite directly without a running daemon.
+
+    - path: "src/devteam/orchestrator/**"
+      instructions: >
+        DBOS durable workflows. Every side-effecting call must be a @DBOS.step(). Verify crash recovery: replayed steps must not
+        re-execute side effects. Check that workflow functions enforce review chain order (peer before EM, always).
+
+    - path: "src/devteam/agents/**"
+      instructions: >
+        Agent definitions and invoker wrapping Claude Agent SDK. Verify agent .md templates have correct model tier (opus/sonnet/haiku)
+        and tool access. Check invoker handles rate limits, timeouts, and returns structured output.
+
+    - path: "src/devteam/knowledge/**"
+      instructions: >
+        SurrealDB knowledge store with vector embeddings and graph relationships. Verify scope filtering (process=shared,
+        code=project-scoped). Check graceful degradation when SurrealDB is unavailable. Validate secret scanning on ingest.
+
+    - path: "src/devteam/git/**"
+      instructions: >
+        Git lifecycle: worktrees, branches, PRs, forks. Every side-effecting operation must be idempotent on retry (check-before-act
+        pattern). Verify cleanup removes worktrees, branches, and closes PRs. Check fork detection logic.
+
+    - path: "src/devteam/config/**"
+      instructions: >
+        Configuration from ~/.devteam/config.toml (global) merged with per-project devteam.toml. Verify push_to_main is always forced
+        to "never" regardless of config. Check that project settings properly override global defaults.
+
+    - path: "tests/**"
+      instructions: >
+        Tests use pytest + pytest-asyncio. Verify tests don't depend on external services (SurrealDB uses mem://, git uses tmp repos,
+        HTTP uses httpx AsyncClient). Check that state machine tests cover invalid transition rejection.
+
+    - path: ".github/workflows/**"
+      instructions: >
+        CI pipelines run on every PR: policy check (lockfile), ruff (lint + format), pyright (type check), pytest. Verify pixi
+        environment setup is correct. Check timeout values are reasonable.
+
+  # ---------------------------------------------------------------------------
+  # AUTO REVIEW
+  # ---------------------------------------------------------------------------
+  auto_review:
+    enabled: true
+    auto_incremental_review: true
+    auto_pause_after_reviewed_commits: 5
+    drafts: false
+    ignore_title_keywords:
+      - "WIP"
+      - "do not review"
+      - "skip review"
+    description_keyword: ""
+    labels: []
+    base_branches: []
+    ignore_usernames:
+      - "dependabot[bot]"
+      - "renovate[bot]"
+      - "github-actions[bot]"
+
+  # ---------------------------------------------------------------------------
+  # PRE-MERGE CHECKS
+  # ---------------------------------------------------------------------------
+  pre_merge_checks:
+    override_requested_reviewers_only: false
+    title:
+      mode: "warning"
+      requirements: "Must use conventional commit format (feat:, fix:, docs:, chore:, refactor:, test:, style:, perf:, ci:)"
+    description:
+      mode: "warning"
+    issue_assessment:
+      mode: "off"
+    docstrings:
+      mode: "off"
+      threshold: 80
+    custom_checks:
+      - name: "State Machine Invariants"
+        mode: "warning"
+        instructions: >
+          If models/entities.py or models/state.py changed, verify all state transitions are tested for both valid and invalid paths.
+          Check that no code bypasses the validated transition methods to set status directly.
+      - name: "DBOS Step Coverage"
+        mode: "warning"
+        instructions: >
+          If orchestrator/ changed, verify every external side effect (git operations, GitHub API calls, agent invocations) is wrapped
+          in a @DBOS.step() decorator. Unwrapped side effects break crash recovery.
+      - name: "Idempotent Side Effects"
+        mode: "warning"
+        instructions: >
+          If git/ changed, verify every side-effecting function follows the check-before-act pattern: check if the effect already
+          happened before performing it. This is required for safe crash recovery and retry.
+
+  # ---------------------------------------------------------------------------
+  # FINISHING TOUCHES
+  # ---------------------------------------------------------------------------
+  finishing_touches:
+    docstrings:
+      enabled: false
+    unit_tests:
+      enabled: false
+    custom: []
+
+  # ---------------------------------------------------------------------------
+  # TOOLS
+  # ---------------------------------------------------------------------------
+  tools:
+    # Relevant — Python project
+    ruff:
+      enabled: true
+    pylint:
+      enabled: false
+    semgrep:
+      enabled: true
+    gitleaks:
+      enabled: true
+    trufflehog:
+      enabled: true
+    markdownlint:
+      enabled: true
+    languagetool:
+      enabled: true
+    github-checks:
+      enabled: true
+    dotenvLint:
+      enabled: true
+    osvScanner:
+      enabled: true
+    yamllint:
+      enabled: true
+    actionlint:
+      enabled: true
+
+    # Not relevant
+    eslint:
+      enabled: false
+    biome:
+      enabled: false
+    flake8:
+      enabled: false
+    shellcheck:
+      enabled: false
+    hadolint:
+      enabled: false
+    checkov:
+      enabled: false
+    trivy:
+      enabled: false
+    oxc:
+      enabled: false
+    phpstan:
+      enabled: false
+    phpmd:
+      enabled: false
+    phpcs:
+      enabled: false
+    swiftlint:
+      enabled: false
+    detekt:
+      enabled: false
+    rubocop:
+      enabled: false
+    clippy:
+      enabled: false
+    fortitudeLint:
+      enabled: false
+    buf:
+      enabled: false
+    regal:
+      enabled: false
+    pmd:
+      enabled: false
+    clang:
+      enabled: false
+    cppcheck:
+      enabled: false
+    opengrep:
+      enabled: false
+    shopifyThemeCheck:
+      enabled: false
+    luacheck:
+      enabled: false
+    brakeman:
+      enabled: false
+    psscriptanalyzer:
+      enabled: false
+    blinter:
+      enabled: false
+    checkmake:
+      enabled: false
+    htmlhint:
+      enabled: false
+    stylelint:
+      enabled: false
+    sqlfluff:
+      enabled: false
+    prismaLint:
+      enabled: false
+    tflint:
+      enabled: false
+    circleci:
+      enabled: false
+    smartyLint:
+      enabled: false
+    emberTemplateLint:
+      enabled: false
+    golangci-lint:
+      enabled: false
+
+# =============================================================================
+# CHAT
+# =============================================================================
+
+chat:
+  art: false
+  auto_reply: true
+  integrations:
+    jira:
+      usage: "disabled"
+    linear:
+      usage: "disabled"
+
+# =============================================================================
+# KNOWLEDGE BASE
+# =============================================================================
+
+knowledge_base:
+  opt_out: false
+  web_search:
+    enabled: true
+  code_guidelines:
+    enabled: true
+    filePatterns:
+      - "**/CLAUDE.md"
+      - "**/AGENTS.md"
+  learnings:
+    scope: "global"
+  issues:
+    scope: "auto"
+  pull_requests:
+    scope: "auto"
+  jira:
+    usage: "disabled"
+    project_keys: []
+  linear:
+    usage: "disabled"
+    team_keys: []
+  mcp:
+    usage: "auto"
+    disabled_servers: []
+  linked_repositories: []
+
+# =============================================================================
+# ISSUE ENRICHMENT
+# =============================================================================
+
+issue_enrichment:
+  auto_enrich:
+    enabled: false
+  planning:
+    enabled: false
+    auto_planning:
+      enabled: false
+      labels: []
+  labeling:
+    labeling_instructions: []
+    auto_apply_labels: false
+
+# =============================================================================
+# CODE GENERATION
+# =============================================================================
+
+code_generation:
+  docstrings:
+    language: "en-US"
+    path_instructions: []
+  unit_tests:
+    path_instructions: []

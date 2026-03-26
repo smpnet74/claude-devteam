@@ -8,6 +8,19 @@
 
 ---
 
+## Development Workflow
+
+All implementation work uses feature branches with pull requests. **PRs require human approval before merge** — no auto-merging to main.
+
+1. **Branch per phase:** Create a feature branch (e.g., `feat/phase-1-core-daemon-cli`) for each phase.
+2. **PR for review:** When a phase is complete with all tests passing, open a PR to `main`.
+3. **CI must pass:** The PR workflow (`.github/workflows/pr.yml`) runs policy checks, ruff, pyright, and pytest. All must pass.
+4. **CodeRabbit reviews:** CodeRabbit is configured (`.coderabbit.yaml`) and will review every PR automatically.
+5. **Human approval required:** The PR waits for the human operator to review and approve. Do not merge without explicit approval.
+6. **Squash merge:** Use squash merge for clean history on `main`.
+
+---
+
 ## Architecture Overview
 
 ```
@@ -173,7 +186,7 @@ Phase 6: Rate Limit & Concurrency
 **Can run in parallel with:** Phase 3
 
 **What it builds:**
-- SurrealDB embedded connection and schema initialization
+- SurrealDB connection and schema initialization (Docker container, ws://localhost:8000)
 - Graph relationships (discovered, supersedes, requires, relates_to)
 - Ollama embedding integration (nomic-embed-text, 768d)
 - Vector search with scope filtering
@@ -252,11 +265,15 @@ These items were identified during plan review and must be addressed during impl
    - `devteam trace` — query DBOS step metadata, format as timeline. Implement in Plan 3 or as a separate integration task.
    - `devteam focus` — write/read `~/.devteam/focus/<shell-pid>`. Implement in Plan 1.
 
-6. **Python version:** standardize on 3.11+ across all plans and pyproject.toml.
+6. **Python version:** standardize on 3.13 across all plans and pyproject.toml.
 
 7. **Plan 5 vector search** must use SurrealDB's native `<|N|>` KNN operator for HNSW index utilization, not plain ORDER BY.
 
 8. **Plan 6 SQLite queue** is the V1 implementation. If DBOS Queue proves more appropriate during integration, swap at that time.
+
+9. **CI and CodeRabbit** are pre-configured in the repo (`.github/workflows/pr.yml` and `.coderabbit.yaml`). Plan 1's scaffolding step must include `ruff` and `pyright` as dev dependencies so CI passes from the first PR.
+
+10. **Dependency pins:** DBOS `>=2.16,<3`, SurrealDB Python SDK `>=1.0.8,<2` (server v3.0.4 via Docker), Claude Agent SDK `==0.1.50`. These are intentional pins — do not widen ranges.
 
 ---
 

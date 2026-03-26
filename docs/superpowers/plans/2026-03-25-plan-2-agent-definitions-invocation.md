@@ -6,7 +6,7 @@
 
 **Architecture:** Agent definitions live as `.md` files with YAML frontmatter specifying model and tools. At daemon startup, the agent registry parses all `.md` files from `~/.devteam/agents/` into an in-memory lookup keyed by role slug. The agent invoker wraps Claude Agent SDK `query()` calls, injecting the correct model, tools, working directory, and structured output schema per invocation. Structured output contracts (JSON schemas) ensure the orchestrator can machine-parse every agent response.
 
-**Tech Stack:** Python 3.11+, claude-agent-sdk, pyyaml, pydantic (JSON schema generation), pytest
+**Tech Stack:** Python 3.13, claude-agent-sdk==0.1.50, pyyaml, pydantic (JSON schema generation), pytest
 
 **Note:** Structured output contracts (ImplementationResult, ReviewResult, DecompositionResult, RoutingResult) are defined in Plan 3 (`src/devteam/orchestrator/schemas.py`) as the single source of truth. This plan's invoker uses generic `dict` returns — schema validation is enforced in Plan 3's workflow layer.
 
@@ -15,6 +15,12 @@
 ## ~~Task 1: Create structured output contracts module~~ (REMOVED — see Plan 3, Task 1)
 
 Structured output schemas are defined in `src/devteam/orchestrator/schemas.py` (Plan 3) to avoid duplication. The invoker in this plan returns raw dicts; the orchestrator validates them against schemas.
+
+- [ ] **Step 0 (1 min):** Add Claude Agent SDK and PyYAML dependencies.
+
+```bash
+pixi add --pypi "claude-agent-sdk==0.1.50" "pyyaml>=6,<7"
+```
 
 - [ ] **Step 1 (2 min):** Create `src/devteam/agents/` package directory and `__init__.py`.
 
