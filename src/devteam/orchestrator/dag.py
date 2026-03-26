@@ -238,10 +238,7 @@ class DAGExecutor:
 
         # Tasks still PENDING after execution loop are blocked (their
         # dependencies failed, so they could never become ready).
-        blocked = [
-            tid for tid, node in dag.nodes.items()
-            if node.state == TaskState.PENDING
-        ]
+        blocked = [tid for tid, node in dag.nodes.items() if node.state == TaskState.PENDING]
 
         return DAGExecutionResult(
             results=dag.get_results(),

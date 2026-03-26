@@ -123,9 +123,7 @@ class TestSmallFixDetection:
         )
 
     def test_adoc_files_are_no_behavior_change(self) -> None:
-        assert is_small_fix_with_no_behavior_change(
-            WorkType.CODE, ["docs/guide.adoc"]
-        )
+        assert is_small_fix_with_no_behavior_change(WorkType.CODE, ["docs/guide.adoc"])
 
     def test_empty_files_list(self) -> None:
         # Empty list should be treated as "no info" and return False

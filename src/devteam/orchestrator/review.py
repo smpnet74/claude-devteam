@@ -63,7 +63,8 @@ def get_review_chain(work_type: WorkType, assigned_to: str | None = None) -> Rev
     if work_type == WorkType.DOCUMENTATION and assigned_to:
         gates = tuple(
             ReviewGate(name=g.name, reviewer_role=assigned_to, required=g.required)
-            if g.name == "engineer_review" else g
+            if g.name == "engineer_review"
+            else g
             for g in gates
         )
     return ReviewChain(work_type=work_type, gates=gates)
@@ -82,10 +83,7 @@ def is_small_fix_with_no_behavior_change(
     # Config files (.yml, .yaml, .toml, .json) and style files (.css, .scss)
     # can affect runtime behavior and must not be skipped.
     _NON_BEHAVIORAL_EXTENSIONS = frozenset({".md", ".rst", ".txt", ".adoc"})
-    return all(
-        any(f.endswith(ext) for ext in _NON_BEHAVIORAL_EXTENSIONS)
-        for f in files_changed
-    )
+    return all(any(f.endswith(ext) for ext in _NON_BEHAVIORAL_EXTENSIONS) for f in files_changed)
 
 
 @dataclass

@@ -624,8 +624,7 @@ class TestBuildRevisionFeedback:
         assert result.status == TaskStatus.APPROVED
         # The second engineer call should have structured revision feedback
         engineer_calls = [
-            c for c in invoker.invoke.call_args_list
-            if c.kwargs.get("role") == "backend_engineer"
+            c for c in invoker.invoke.call_args_list if c.kwargs.get("role") == "backend_engineer"
         ]
         assert len(engineer_calls) >= 2
         second_prompt = engineer_calls[1].kwargs["prompt"]

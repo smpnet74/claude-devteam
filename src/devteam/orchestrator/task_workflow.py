@@ -188,11 +188,7 @@ def execute_task_workflow(
 
         # Check if engineer raised a question
         if impl.status in ("needs_clarification", "blocked"):
-            q_type = (
-                QuestionType.BLOCKED
-                if impl.status == "blocked"
-                else QuestionType.TECHNICAL
-            )
+            q_type = QuestionType.BLOCKED if impl.status == "blocked" else QuestionType.TECHNICAL
             question = QuestionRecord(
                 question=impl.question or "Unspecified question",
                 question_type=q_type,
