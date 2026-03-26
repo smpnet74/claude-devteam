@@ -5,11 +5,16 @@ import json
 import pytest
 from devteam.agents.contracts import (
     DecompositionResult,
+    EscalationLevel,
     ImplementationResult,
+    QuestionRecord,
+    QuestionType,
     ReviewComment,
     ReviewResult,
+    RoutePath,
     RoutingResult,
     TaskDecomposition,
+    WorkType,
 )
 
 
@@ -577,9 +582,198 @@ class TestSchemaForRole:
             ReviewResult,
             DecompositionResult,
             RoutingResult,
+            QuestionRecord,
         ]:
             schema = model_cls.model_json_schema()
             # Verify it's valid JSON by round-tripping
             json_str = json.dumps(schema)
             parsed = json.loads(json_str)
             assert parsed == schema
+
+
+class TestRoutePath:
+    """Tests for the RoutePath enum."""
+
+    def test_all_values(self):
+        assert RoutePath.FULL_PROJECT == "full_project"
+        assert RoutePath.RESEARCH == "research"
+        assert RoutePath.SMALL_FIX == "small_fix"
+        assert RoutePath.OSS_CONTRIBUTION == "oss_contribution"
+
+    def test_string_coercion_in_routing_result(self):
+        """RoutePath is a str enum, so string values are accepted by Pydantic."""
+        result = RoutingResult(path="full_project", reasoning="test")
+        assert result.path == RoutePath.FULL_PROJECT
+        assert isinstance(result.path, RoutePath)
+
+    def test_invalid_path_rejected(self):
+        with pytest.raises(ValueError):
+            RoutingResult(path="nonexistent", reasoning="test")
+
+
+class TestWorkType:
+    """Tests for the WorkType enum."""
+
+    def test_all_values(self):
+        assert WorkType.CODE == "code"
+        assert WorkType.RESEARCH == "research"
+        assert WorkType.PLANNING == "planning"
+        assert WorkType.ARCHITECTURE == "architecture"
+        assert WorkType.DOCUMENTATION == "documentation"
+
+    def test_default_work_type_on_task(self):
+        task = TaskDecomposition(
+            id="T-1",
+            description="test task",
+            assigned_to="backend_engineer",
+            team="a",
+            depends_on=[],
+            pr_group="test",
+        )
+        assert task.work_type == WorkType.CODE
+
+    def test_explicit_work_type(self):
+        task = TaskDecomposition(
+            id="T-1",
+            description="research task",
+            assigned_to="planner_researcher_a",
+            team="a",
+            depends_on=[],
+            pr_group="research",
+            work_type=WorkType.RESEARCH,
+        )
+        assert task.work_type == WorkType.RESEARCH
+
+    def test_string_coercion(self):
+        task = TaskDecomposition(
+            id="T-1",
+            description="docs task",
+            assigned_to="tech_writer",
+            team="b",
+            depends_on=[],
+            pr_group="docs",
+            work_type="documentation",
+        )
+        assert task.work_type == WorkType.DOCUMENTATION
+
+
+class TestQuestionType:
+    """Tests for the QuestionType enum."""
+
+    def test_all_values(self):
+        assert QuestionType.TECHNICAL == "technical"
+        assert QuestionType.ARCHITECTURAL == "architectural"
+        assert QuestionType.PRODUCT == "product"
+        assert QuestionType.PROCESS == "process"
+        assert QuestionType.BLOCKED == "blocked"
+
+
+class TestEscalationLevel:
+    """Tests for the EscalationLevel enum."""
+
+    def test_all_values(self):
+        assert EscalationLevel.SUPERVISOR == "supervisor"
+        assert EscalationLevel.LEADERSHIP == "leadership"
+        assert EscalationLevel.HUMAN == "human"
+
+
+class TestQuestionRecord:
+    """Tests for the QuestionRecord model."""
+
+    def test_basic_question(self):
+        q = QuestionRecord(
+            question="Should we use PostgreSQL or SQLite?",
+            question_type=QuestionType.TECHNICAL,
+        )
+        assert q.question == "Should we use PostgreSQL or SQLite?"
+        assert q.question_type == QuestionType.TECHNICAL
+        assert q.escalation_level == EscalationLevel.SUPERVISOR
+        assert q.context == ""
+
+    def test_full_question(self):
+        q = QuestionRecord(
+            question="Is the auth module in scope?",
+            question_type=QuestionType.PRODUCT,
+            context="The spec mentions auth but the plan does not include it",
+            escalation_level=EscalationLevel.LEADERSHIP,
+        )
+        assert q.question_type == QuestionType.PRODUCT
+        assert q.escalation_level == EscalationLevel.LEADERSHIP
+        assert "auth" in q.context
+
+    def test_empty_question_rejected(self):
+        with pytest.raises(ValueError):
+            QuestionRecord(
+                question="",
+                question_type=QuestionType.TECHNICAL,
+            )
+
+    def test_string_coercion_for_enums(self):
+        q = QuestionRecord(
+            question="test question",
+            question_type="architectural",
+            escalation_level="human",
+        )
+        assert q.question_type == QuestionType.ARCHITECTURAL
+        assert q.escalation_level == EscalationLevel.HUMAN
+
+    def test_invalid_question_type_rejected(self):
+        with pytest.raises(ValueError):
+            QuestionRecord(
+                question="test",
+                question_type="invalid_type",
+            )
+
+    def test_invalid_escalation_level_rejected(self):
+        with pytest.raises(ValueError):
+            QuestionRecord(
+                question="test",
+                question_type=QuestionType.TECHNICAL,
+                escalation_level="invalid_level",
+            )
+
+
+class TestRoutingResultWithEnum:
+    """Tests for RoutingResult with RoutePath enum and target_team."""
+
+    def test_with_route_path_enum(self):
+        result = RoutingResult(
+            path=RoutePath.FULL_PROJECT,
+            reasoning="Complex multi-component feature",
+        )
+        assert result.path == RoutePath.FULL_PROJECT
+        assert result.target_team is None
+
+    def test_small_fix_with_target_team(self):
+        result = RoutingResult(
+            path=RoutePath.SMALL_FIX,
+            reasoning="Single file bug fix",
+            target_team="a",
+        )
+        assert result.path == RoutePath.SMALL_FIX
+        assert result.target_team == "a"
+
+    def test_oss_contribution(self):
+        result = RoutingResult(
+            path=RoutePath.OSS_CONTRIBUTION,
+            reasoning="Contributing to external repo",
+        )
+        assert result.path == RoutePath.OSS_CONTRIBUTION
+
+    def test_research_path(self):
+        result = RoutingResult(
+            path=RoutePath.RESEARCH,
+            reasoning="User wants analysis, not code changes",
+        )
+        assert result.path == RoutePath.RESEARCH
+
+    def test_json_roundtrip(self):
+        original = RoutingResult(
+            path=RoutePath.SMALL_FIX,
+            reasoning="Quick fix",
+            target_team="b",
+        )
+        data = json.loads(original.model_dump_json())
+        restored = RoutingResult.model_validate(data)
+        assert restored.path == original.path
+        assert restored.target_team == original.target_team

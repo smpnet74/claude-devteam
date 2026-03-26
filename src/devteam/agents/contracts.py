@@ -8,9 +8,50 @@ output without prose parsing.
 from __future__ import annotations
 
 import re
+from enum import Enum
 from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator, model_validator
+
+
+# --- Enums ---
+
+
+class RoutePath(str, Enum):
+    """Routing paths for incoming work."""
+
+    FULL_PROJECT = "full_project"
+    RESEARCH = "research"
+    SMALL_FIX = "small_fix"
+    OSS_CONTRIBUTION = "oss_contribution"
+
+
+class WorkType(str, Enum):
+    """Type of work a task represents."""
+
+    CODE = "code"
+    RESEARCH = "research"
+    PLANNING = "planning"
+    ARCHITECTURE = "architecture"
+    DOCUMENTATION = "documentation"
+
+
+class QuestionType(str, Enum):
+    """Category of a question raised during execution."""
+
+    TECHNICAL = "technical"
+    ARCHITECTURAL = "architectural"
+    PRODUCT = "product"
+    PROCESS = "process"
+    BLOCKED = "blocked"
+
+
+class EscalationLevel(str, Enum):
+    """Where a question gets escalated to."""
+
+    SUPERVISOR = "supervisor"
+    LEADERSHIP = "leadership"
+    HUMAN = "human"
 
 
 class ImplementationResult(BaseModel):
@@ -98,6 +139,10 @@ class TaskDecomposition(BaseModel):
         min_length=1,
         description="PR group name — tasks in the same group ship as one PR",
     )
+    work_type: WorkType = Field(
+        default=WorkType.CODE,
+        description="Type of work this task represents",
+    )
 
     @field_validator("id")
     @classmethod
@@ -178,8 +223,27 @@ class DecompositionResult(BaseModel):
         return self
 
 
+class QuestionRecord(BaseModel):
+    """A question raised during task execution."""
+
+    question: str = Field(min_length=1, description="The question text")
+    question_type: QuestionType = Field(description="Category of the question")
+    context: str = Field(
+        default="",
+        description="Additional context about why this question arose",
+    )
+    escalation_level: EscalationLevel = Field(
+        default=EscalationLevel.SUPERVISOR,
+        description="Where the question should be escalated",
+    )
+
+
 class RoutingResult(BaseModel):
     """Result envelope for CEO routing decision."""
 
-    path: Literal["full_project", "research", "small_fix", "oss_contribution"]
+    path: RoutePath = Field(description="Which routing path to follow")
     reasoning: str = Field(min_length=1, description="Why this routing path was chosen")
+    target_team: str | None = Field(
+        default=None,
+        description="For small_fix: which team to route to directly",
+    )
