@@ -48,7 +48,11 @@ def start(
         try:
             acquire_pid_lock(pid_path, os.getpid())
         except DaemonAlreadyRunningError as e:
-            typer.echo(f"Daemon already running (PID {e.pid})")
+            state = get_daemon_state(pid_path, port_path)
+            typer.echo(f"Daemon already running (PID {state.pid or e.pid}, port {state.port})")
+            raise typer.Exit(code=0)
+        except (OSError, RuntimeError) as e:
+            typer.echo(f"Error: failed to acquire daemon lock: {e}")
             raise typer.Exit(code=1)
         typer.echo(f"Starting daemon on port {port} (foreground, PID {os.getpid()})")
         try:

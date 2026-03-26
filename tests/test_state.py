@@ -171,6 +171,10 @@ class TestPRTransitions:
         with pytest.raises(InvalidTransitionError):
             validate_pr_transition(PRStatus.CANCELED, PRStatus.BRANCH_CREATED)
 
+    def test_cannot_leave_pr_escalated_to_human(self) -> None:
+        with pytest.raises(InvalidTransitionError):
+            validate_pr_transition(PRStatus.ESCALATED_TO_HUMAN, PRStatus.WAITING_ON_CI)
+
 
 class TestTransitionTableCompleteness:
     def test_job_transitions_cover_all_states(self) -> None:

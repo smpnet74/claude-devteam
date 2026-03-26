@@ -105,6 +105,21 @@ def release_pid_lock(pid_path: Path) -> None:
         pass
 
 
+def _cleanup_if_owner(pid_path: Path, port_path: Path, expected_pid: int) -> None:
+    """Remove PID and port files only if the PID file still contains expected_pid.
+
+    This guards against a race where a new daemon starts between our process
+    dying and our cleanup running — we must not delete the new daemon's files.
+    """
+    current_pid = read_pid_file(pid_path)
+    if current_pid == expected_pid:
+        release_pid_lock(pid_path)
+    try:
+        port_path.unlink()
+    except FileNotFoundError:
+        pass
+
+
 def write_port_file(port_path: Path, port: int) -> None:
     """Write the daemon port to the port file."""
     port_path.write_text(f"{port}\n")
@@ -156,11 +171,7 @@ def stop_daemon(pid_path: Path, port_path: Path, *, force: bool = False) -> int:
         raise DaemonNotRunningError()
     if not _is_process_alive(pid):
         # Process already dead — clean up stale files
-        release_pid_lock(pid_path)
-        try:
-            port_path.unlink()
-        except FileNotFoundError:
-            pass
+        _cleanup_if_owner(pid_path, port_path, pid)
         raise DaemonNotRunningError()
 
     sig = signal.SIGKILL if force else signal.SIGTERM
@@ -168,11 +179,7 @@ def stop_daemon(pid_path: Path, port_path: Path, *, force: bool = False) -> int:
         os.kill(pid, sig)
     except ProcessLookupError:
         # Process exited between our alive-check and the kill call
-        release_pid_lock(pid_path)
-        try:
-            port_path.unlink()
-        except FileNotFoundError:
-            pass
+        _cleanup_if_owner(pid_path, port_path, pid)
         return pid
 
     # Wait for process to exit before cleaning up files
@@ -193,11 +200,9 @@ def stop_daemon(pid_path: Path, port_path: Path, *, force: bool = False) -> int:
     if _is_process_alive(pid):
         raise RuntimeError(f"Failed to stop daemon process {pid}")
 
-    # Only clean up files after the process is confirmed dead
-    release_pid_lock(pid_path)
-    try:
-        port_path.unlink()
-    except FileNotFoundError:
-        pass
+    # Only clean up files after the process is confirmed dead.
+    # Verify the PID file still belongs to us — a concurrent `daemon start`
+    # could have replaced it with a new daemon's PID.
+    _cleanup_if_owner(pid_path, port_path, pid)
 
     return pid
