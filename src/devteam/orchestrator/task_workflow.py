@@ -9,6 +9,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from devteam.models.entities import TaskStatus
+from devteam.orchestrator.escalation import escalate_question
 from devteam.orchestrator.routing import InvokerProtocol
 from devteam.orchestrator.schemas import (
     ImplementationResult,
@@ -157,6 +158,14 @@ def em_review(
     return ReviewResult.model_validate(raw)
 
 
+def _build_revision_feedback(review: ReviewResult) -> str:
+    """Build structured revision feedback from a review result."""
+    parts = [f"Review summary: {review.summary}"]
+    for comment in review.comments:
+        parts.append(f"  {comment.file}:{comment.line} [{comment.severity}] {comment.comment}")
+    return "\n".join(parts)
+
+
 def execute_task_workflow(
     ctx: TaskContext,
     invoker: InvokerProtocol,
@@ -178,23 +187,32 @@ def execute_task_workflow(
         result.revision_count = iteration
 
         # Check if engineer raised a question
-        if impl.status == "needs_clarification":
-            result.status = TaskStatus.WAITING_ON_QUESTION
-            result.question = QuestionRecord(
+        if impl.status in ("needs_clarification", "blocked"):
+            q_type = (
+                QuestionType.BLOCKED
+                if impl.status == "blocked"
+                else QuestionType.TECHNICAL
+            )
+            question = QuestionRecord(
                 question=impl.question or "Unspecified question",
-                question_type=QuestionType.TECHNICAL,
+                question_type=q_type,
                 context=f"Raised during iteration {iteration} of task {ctx.task.id}",
             )
-            return result
 
-        if impl.status == "blocked":
-            result.status = TaskStatus.FAILED
-            result.error = f"Engineer reported blocked: {impl.summary}"
-            result.question = QuestionRecord(
-                question=impl.question or "Unspecified blocker",
-                question_type=QuestionType.BLOCKED,
-                context=f"Blocked during iteration {iteration} of task {ctx.task.id}",
-            )
+            # Attempt escalation before giving up
+            esc_result = escalate_question(question, invoker, em_role=ctx.em_role)
+
+            if esc_result.resolved and esc_result.answer:
+                # Feed the answer back as revision feedback and re-execute
+                revision_feedback = (
+                    f"Your question was answered by escalation "
+                    f"({esc_result.final_level.value}): {esc_result.answer}"
+                )
+                continue
+
+            # Escalation could not resolve -- needs human input
+            result.status = TaskStatus.WAITING_ON_QUESTION
+            result.question = question
             return result
 
         # Step 2: Peer review (enforced before EM review)
@@ -205,7 +223,7 @@ def execute_task_workflow(
         # If peer review requires revision (needs_revision or blocked),
         # don't proceed to EM -- loop back to the engineer
         if pr.needs_revision:
-            revision_feedback = pr.summary
+            revision_feedback = _build_revision_feedback(pr)
             result.status = TaskStatus.REVISION_REQUESTED
             continue
 
@@ -219,7 +237,7 @@ def execute_task_workflow(
             return result
 
         # EM requested revision -- loop back
-        revision_feedback = em.summary
+        revision_feedback = _build_revision_feedback(em)
         result.status = TaskStatus.REVISION_REQUESTED
 
     # Circuit breaker -- max revisions exceeded

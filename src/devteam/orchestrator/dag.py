@@ -133,6 +133,7 @@ class DAGExecutionResult:
     results: dict[str, Any]
     failed_tasks: dict[str, str]  # task_id -> error message
     all_succeeded: bool
+    blocked_tasks: list[str] = field(default_factory=list)
 
 
 class DAGExecutor:
@@ -235,6 +236,13 @@ class DAGExecutor:
                         raise RuntimeError("DAG execution timed out")
                     time.sleep(0.1)  # Brief poll interval; no-op in sync tests
 
+        # Tasks still PENDING after execution loop are blocked (their
+        # dependencies failed, so they could never become ready).
+        blocked = [
+            tid for tid, node in dag.nodes.items()
+            if node.state == TaskState.PENDING
+        ]
+
         return DAGExecutionResult(
             results=dag.get_results(),
             failed_tasks={
@@ -244,4 +252,5 @@ class DAGExecutor:
             },
             all_succeeded=not dag.has_failed
             and all(n.state == TaskState.COMPLETED for n in dag.nodes.values()),
+            blocked_tasks=blocked,
         )

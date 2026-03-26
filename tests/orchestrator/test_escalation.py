@@ -82,6 +82,20 @@ class TestBuildEscalationPrompt:
         prompt = build_escalation_prompt(q, "chief_architect")
         assert "chief_architect" in prompt
 
+    def test_includes_context_when_set(self) -> None:
+        q = _make_question()
+        prompt = build_escalation_prompt(q, "em_team_a")
+        assert "Choosing a caching layer for the API" in prompt
+
+    def test_omits_context_when_empty(self) -> None:
+        q = QuestionRecord(
+            question="Redis or Memcached?",
+            question_type=QuestionType.TECHNICAL,
+            context="",
+        )
+        prompt = build_escalation_prompt(q, "em_team_a")
+        assert "Context:" not in prompt
+
 
 # ---------------------------------------------------------------------------
 # attempt_resolution
@@ -122,6 +136,26 @@ class TestAttemptResolution:
 
         with pytest.raises(RuntimeError, match="Escalation attempt to 'em_team_a' failed"):
             attempt_resolution(q, "em_team_a", invoker)
+
+    def test_malformed_payload_returns_unresolved(self) -> None:
+        """Invoker returns garbage that fails schema validation -> unresolved attempt."""
+        invoker = MagicMock()
+        invoker.invoke.return_value = {"garbage": "data"}  # missing required fields
+        q = _make_question()
+        attempt = attempt_resolution(q, "em_team_a", invoker)
+
+        assert not attempt.resolved
+        assert "failed schema validation" in (attempt.reasoning or "")
+
+    def test_missing_reasoning_returns_unresolved(self) -> None:
+        """Invoker returns dict without reasoning -> fails validation."""
+        invoker = MagicMock()
+        invoker.invoke.return_value = {"resolved": True, "answer": "Use Redis"}
+        q = _make_question()
+        attempt = attempt_resolution(q, "em_team_a", invoker)
+
+        assert not attempt.resolved
+        assert "failed schema validation" in (attempt.reasoning or "")
 
     def test_attempt_is_frozen(self) -> None:
         attempt = EscalationAttempt(level="em", resolved=True, answer="yes")

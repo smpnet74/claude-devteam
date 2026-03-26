@@ -276,6 +276,14 @@ class QuestionRecord(BaseModel):
     )
 
 
+class EscalationAttemptResult(BaseModel):
+    """Structured output from a supervisor attempting to resolve a question."""
+
+    resolved: bool
+    answer: str | None = None
+    reasoning: str = Field(min_length=1)
+
+
 class RoutingResult(BaseModel):
     """Result envelope for CEO routing decision."""
 

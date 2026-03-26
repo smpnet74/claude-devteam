@@ -48,14 +48,24 @@ REVIEW_CHAINS: dict[WorkType, tuple[ReviewGate, ...]] = {
     WorkType.PLANNING: (ReviewGate(name="ca_review", reviewer_role="chief_architect"),),
     WorkType.ARCHITECTURE: (ReviewGate(name="ceo_review", reviewer_role="ceo"),),
     WorkType.DOCUMENTATION: (
-        ReviewGate(name="engineer_review", reviewer_role="backend_engineer", required=False),
+        ReviewGate(name="engineer_review", reviewer_role="backend_engineer", required=True),
     ),
 }
 
 
-def get_review_chain(work_type: WorkType) -> ReviewChain:
-    """Get the review chain for a given work type."""
+def get_review_chain(work_type: WorkType, assigned_to: str | None = None) -> ReviewChain:
+    """Get the review chain for a given work type.
+
+    For DOCUMENTATION work, the engineer_review gate uses the task's
+    assigned_to role instead of the hardcoded default.
+    """
     gates = REVIEW_CHAINS.get(work_type, ())
+    if work_type == WorkType.DOCUMENTATION and assigned_to:
+        gates = tuple(
+            ReviewGate(name=g.name, reviewer_role=assigned_to, required=g.required)
+            if g.name == "engineer_review" else g
+            for g in gates
+        )
     return ReviewChain(work_type=work_type, gates=gates)
 
 
@@ -68,20 +78,14 @@ def is_small_fix_with_no_behavior_change(
         return False
     if work_type != WorkType.CODE:
         return False
-    # Heuristic: if only docs/config/style files changed, no behavior change
-    non_behavioral_patterns = (
-        ".md",
-        ".txt",
-        ".yml",
-        ".yaml",
-        ".toml",
-        ".json",
-        ".css",
-        ".scss",
-        ".prettierrc",
-        ".eslintrc",
+    # Heuristic: only clearly non-executable documentation files qualify.
+    # Config files (.yml, .yaml, .toml, .json) and style files (.css, .scss)
+    # can affect runtime behavior and must not be skipped.
+    _NON_BEHAVIORAL_EXTENSIONS = frozenset({".md", ".rst", ".txt", ".adoc"})
+    return all(
+        any(f.endswith(ext) for ext in _NON_BEHAVIORAL_EXTENSIONS)
+        for f in files_changed
     )
-    return all(any(f.endswith(p) for p in non_behavioral_patterns) for f in files_changed)
 
 
 @dataclass
@@ -100,13 +104,14 @@ def execute_post_pr_review(
     invoker: InvokerProtocol,
     files_changed: list[str] | None = None,
     skip_qa_for_no_behavior_change: bool = True,
+    assigned_to: str | None = None,
 ) -> PostPRReviewResult:
     """Execute the post-PR review chain for a work type.
 
     Each gate is executed in sequence. If a required gate fails,
     the chain stops (caller decides whether to trigger revision).
     """
-    chain = get_review_chain(work_type)
+    chain = get_review_chain(work_type, assigned_to=assigned_to)
     gate_results: dict[str, ReviewResult] = {}
     failed_gates: list[str] = []
     skipped_gates: list[str] = []
@@ -147,8 +152,11 @@ def execute_post_pr_review(
                 # Stop the chain on required gate failure
                 break
 
+    # all_passed is True if no REQUIRED gates failed
+    required_gate_names = {g.name for g in chain.gates if g.required}
+    required_failures = [g for g in failed_gates if g in required_gate_names]
     return PostPRReviewResult(
-        all_passed=len(failed_gates) == 0,
+        all_passed=len(required_failures) == 0,
         gate_results=gate_results,
         failed_gates=failed_gates,
         skipped_gates=skipped_gates,

@@ -10,6 +10,7 @@ from dataclasses import dataclass, field
 
 from devteam.orchestrator.routing import InvokerProtocol
 from devteam.orchestrator.schemas import (
+    EscalationAttemptResult,
     EscalationLevel,
     QuestionRecord,
     QuestionType,
@@ -57,7 +58,7 @@ def get_escalation_path(question_type: QuestionType) -> list[str]:
 
 def build_escalation_prompt(question: QuestionRecord, level: str) -> str:
     """Build prompt for a supervisor to attempt answering a question."""
-    return (
+    prompt = (
         f"## Question Escalated to You\n\n"
         f"**Question type:** {question.question_type.value}\n"
         f"**Question:** {question.question}\n\n"
@@ -69,6 +70,9 @@ def build_escalation_prompt(question: QuestionRecord, level: str) -> str:
         f'- "answer": your answer (if resolved)\n'
         f'- "reasoning": why you can or cannot answer\n'
     )
+    if question.context:
+        prompt += f"\n\nContext: {question.context}"
+    return prompt
 
 
 def attempt_resolution(
@@ -82,24 +86,26 @@ def attempt_resolution(
         raw = invoker.invoke(
             role=level,
             prompt=prompt,
+            json_schema=EscalationAttemptResult.model_json_schema(),
         )
     except Exception as e:
         raise RuntimeError(f"Escalation attempt to '{level}' failed: {e}") from e
 
-    # Validate the response is a dict with an "answer" key when resolved
-    if not isinstance(raw, dict) or "answer" not in raw:
+    # Validate the response against the structured schema
+    try:
+        validated = EscalationAttemptResult.model_validate(raw)
+    except Exception:
         return EscalationAttempt(
             level=level,
             resolved=False,
-            reasoning=f"Malformed response from {level}: missing 'answer' key",
+            reasoning=f"Malformed response from {level}: failed schema validation",
         )
 
-    resolved = raw.get("resolved", False)
     return EscalationAttempt(
         level=level,
-        resolved=bool(resolved),
-        answer=raw.get("answer"),
-        reasoning=raw.get("reasoning"),
+        resolved=validated.resolved,
+        answer=validated.answer,
+        reasoning=validated.reasoning,
     )
 
 

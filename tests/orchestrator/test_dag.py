@@ -524,3 +524,76 @@ class TestDAGExecutor:
         assert "transport error" in result.failed_tasks["T-1"]
         # T-2 is independent and should still succeed
         assert "T-2" in result.results
+
+    def test_blocked_tasks_tracked_when_dependency_fails(self) -> None:
+        """When T-1 fails, T-2 (depends on T-1) should appear in blocked_tasks."""
+
+        def launch(task: TaskDecomposition) -> str:
+            return task.id
+
+        def wait(handle: str) -> tuple[bool, object]:
+            if handle == "T-1":
+                return (True, RuntimeError("Failed"))
+            return (True, "ok")
+
+        decomp = DecompositionResult(
+            tasks=[
+                _make_task("T-1"),
+                _make_task("T-2", depends_on=["T-1"]),
+                _make_task("T-3"),
+            ],
+            peer_assignments={},
+            parallel_groups=[],
+        )
+        dag = build_dag(decomp)
+        executor = DAGExecutor(launch_task=launch, check_complete=wait)
+        result = executor.execute(dag)
+
+        assert not result.all_succeeded
+        assert "T-1" in result.failed_tasks
+        assert "T-2" in result.blocked_tasks
+        assert "T-3" not in result.blocked_tasks
+        assert "T-3" in result.results
+
+    def test_empty_dag_no_blocked_tasks(self) -> None:
+        """An empty DAG should have no blocked tasks."""
+
+        def launch(task: TaskDecomposition) -> str:
+            raise AssertionError("Should not be called")
+
+        def wait(handle: str) -> tuple[bool, object]:
+            raise AssertionError("Should not be called")
+
+        dag = DAGState()
+        executor = DAGExecutor(launch_task=launch, check_complete=wait)
+        result = executor.execute(dag)
+
+        assert result.blocked_tasks == []
+
+    def test_blocked_tasks_in_diamond_dependency(self) -> None:
+        """In a diamond, if T-1 fails, T-2, T-3, and T-4 are all blocked."""
+
+        def launch(task: TaskDecomposition) -> str:
+            return task.id
+
+        def wait(handle: str) -> tuple[bool, object]:
+            if handle == "T-1":
+                return (True, RuntimeError("Failed"))
+            return (True, "ok")
+
+        decomp = DecompositionResult(
+            tasks=[
+                _make_task("T-1"),
+                _make_task("T-2", depends_on=["T-1"]),
+                _make_task("T-3", depends_on=["T-1"]),
+                _make_task("T-4", depends_on=["T-2", "T-3"]),
+            ],
+            peer_assignments={},
+            parallel_groups=[],
+        )
+        dag = build_dag(decomp)
+        executor = DAGExecutor(launch_task=launch, check_complete=wait)
+        result = executor.execute(dag)
+
+        assert "T-1" in result.failed_tasks
+        assert sorted(result.blocked_tasks) == ["T-2", "T-3", "T-4"]

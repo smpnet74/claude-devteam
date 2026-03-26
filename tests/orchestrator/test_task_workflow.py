@@ -6,6 +6,7 @@ from unittest.mock import MagicMock
 from devteam.models.entities import TaskStatus
 from devteam.orchestrator.task_workflow import (
     TaskContext,
+    _build_revision_feedback,
     build_implementation_prompt,
     build_review_prompt,
     em_review,
@@ -15,6 +16,7 @@ from devteam.orchestrator.task_workflow import (
 )
 from devteam.orchestrator.schemas import (
     ImplementationResult,
+    ReviewComment,
     ReviewResult,
     TaskDecomposition,
 )
@@ -336,13 +338,23 @@ class TestRevisionLoop:
 
 
 class TestQuestionEscalation:
-    def test_question_pauses_task(self) -> None:
-        """Engineer raises question -> task enters waiting_on_question."""
+    def test_question_pauses_task_when_escalation_needs_human(self) -> None:
+        """Engineer raises question, escalation cannot resolve -> task pauses."""
         invoker = MagicMock()
-        invoker.invoke.return_value = _impl_result(
-            status="needs_clarification",
-            question="JWT or sessions?",
-        )
+        call_count = 0
+
+        def side_effect(role: str, prompt: str, **kwargs: object) -> dict[str, object]:
+            nonlocal call_count
+            call_count += 1
+            if role == "backend_engineer":
+                return _impl_result(
+                    status="needs_clarification",
+                    question="JWT or sessions?",
+                )
+            # Escalation: EM cannot resolve
+            return {"resolved": False, "reasoning": "Need product decision"}
+
+        invoker.invoke.side_effect = side_effect
         ctx = _make_ctx()
 
         result = execute_task_workflow(ctx, invoker)
@@ -350,22 +362,91 @@ class TestQuestionEscalation:
         assert result.status == TaskStatus.WAITING_ON_QUESTION
         assert result.question is not None
         assert "JWT" in result.question.question
-        # Peer review should NOT have been called
-        assert invoker.invoke.call_count == 1
+        # Engineer + EM escalation attempt
+        assert call_count == 2
 
-    def test_blocked_engineer_fails_task(self) -> None:
-        """Engineer reports blocked -> task fails."""
+    def test_blocked_engineer_escalates_then_pauses(self) -> None:
+        """Engineer reports blocked, escalation cannot resolve -> task pauses."""
         invoker = MagicMock()
-        invoker.invoke.return_value = _impl_result(
-            status="blocked",
-            question="Cannot access required service",
-        )
+
+        def side_effect(role: str, prompt: str, **kwargs: object) -> dict[str, object]:
+            if role == "backend_engineer":
+                return _impl_result(
+                    status="blocked",
+                    question="Cannot access required service",
+                )
+            # Escalation: nobody can resolve, eventually needs human
+            return {"resolved": False, "reasoning": "Cannot determine"}
+
+        invoker.invoke.side_effect = side_effect
         ctx = _make_ctx()
 
         result = execute_task_workflow(ctx, invoker)
 
-        assert result.status == TaskStatus.FAILED
-        assert invoker.invoke.call_count == 1
+        assert result.status == TaskStatus.WAITING_ON_QUESTION
+        assert result.question is not None
+
+    def test_escalation_resolves_question_re_executes_engineer(self) -> None:
+        """Engineer raises question, escalation resolves it -> engineer re-invoked."""
+        invoker = MagicMock()
+        engineer_calls = 0
+        em_calls = 0
+
+        def side_effect(role: str, prompt: str, **kwargs: object) -> dict[str, object]:
+            nonlocal engineer_calls, em_calls
+            if role == "backend_engineer":
+                engineer_calls += 1
+                if engineer_calls == 1:
+                    return _impl_result(
+                        status="needs_clarification",
+                        question="JWT or sessions?",
+                    )
+                # Second call: engineer proceeds with the answer
+                return _impl_result()
+            if role == "em_team_a":
+                em_calls += 1
+                if em_calls == 1:
+                    # Escalation: EM resolves the question
+                    return {
+                        "resolved": True,
+                        "answer": "Use JWT",
+                        "reasoning": "Matches our auth stack",
+                    }
+                # Subsequent EM calls are review calls
+                return _review_result("approved")
+            if role == "frontend_engineer":
+                return _review_result("approved")
+            return _review_result("approved")
+
+        invoker.invoke.side_effect = side_effect
+        ctx = _make_ctx()
+
+        result = execute_task_workflow(ctx, invoker)
+
+        assert result.status == TaskStatus.APPROVED
+        assert engineer_calls == 2
+
+    def test_escalation_needs_human_task_pauses(self) -> None:
+        """Escalation reaches human level -> task pauses with question."""
+        invoker = MagicMock()
+
+        def side_effect(role: str, prompt: str, **kwargs: object) -> dict[str, object]:
+            if role == "backend_engineer":
+                return _impl_result(
+                    status="blocked",
+                    question="External API is down",
+                )
+            # All escalation levels fail
+            return {"resolved": False, "reasoning": "Cannot help"}
+
+        invoker.invoke.side_effect = side_effect
+        ctx = _make_ctx()
+
+        result = execute_task_workflow(ctx, invoker)
+
+        assert result.status == TaskStatus.WAITING_ON_QUESTION
+        assert result.question is not None
+        assert "External API" in result.question.question
 
 
 # ---------------------------------------------------------------------------
@@ -474,3 +555,78 @@ class TestPeerNeedsRevisionRegression:
         # EM should only be called once (in the second iteration)
         assert call_order.count("em_team_a") == 1
         assert result.revision_count == 1
+
+
+# ---------------------------------------------------------------------------
+# Structured revision feedback
+# ---------------------------------------------------------------------------
+
+
+class TestBuildRevisionFeedback:
+    def test_includes_summary_and_comments(self) -> None:
+        """Revision feedback should include structured review comments."""
+        review = ReviewResult(
+            verdict="needs_revision",
+            summary="Missing error handling",
+            comments=[
+                ReviewComment(
+                    file="src/api.py",
+                    line=42,
+                    severity="error",
+                    comment="Unchecked null return",
+                ),
+                ReviewComment(
+                    file="src/api.py",
+                    line=78,
+                    severity="warning",
+                    comment="Consider using a context manager",
+                ),
+            ],
+        )
+        feedback = _build_revision_feedback(review)
+        assert "Review summary: Missing error handling" in feedback
+        assert "src/api.py:42 [error] Unchecked null return" in feedback
+        assert "src/api.py:78 [warning] Consider using a context manager" in feedback
+
+    def test_no_comments_only_summary(self) -> None:
+        """When no comments, revision feedback is just the summary."""
+        review = ReviewResult(
+            verdict="approved",
+            summary="All good",
+            comments=[],
+        )
+        feedback = _build_revision_feedback(review)
+        assert feedback == "Review summary: All good"
+
+    def test_structured_feedback_passed_to_engineer(self) -> None:
+        """When EM rejects with comments, engineer gets structured feedback."""
+        invoker = MagicMock()
+        em_calls = 0
+
+        def side_effect(role: str, prompt: str, **kwargs: object) -> dict[str, object]:
+            nonlocal em_calls
+            if role == "backend_engineer":
+                return _impl_result()
+            if role == "frontend_engineer":
+                return _review_result("approved")
+            if role == "em_team_a":
+                em_calls += 1
+                if em_calls == 1:
+                    return _review_result("needs_revision")
+                return _review_result("approved")
+            raise ValueError(f"Unexpected role: {role}")
+
+        invoker.invoke.side_effect = side_effect
+        ctx = _make_ctx()
+
+        result = execute_task_workflow(ctx, invoker)
+
+        assert result.status == TaskStatus.APPROVED
+        # The second engineer call should have structured revision feedback
+        engineer_calls = [
+            c for c in invoker.invoke.call_args_list
+            if c.kwargs.get("role") == "backend_engineer"
+        ]
+        assert len(engineer_calls) >= 2
+        second_prompt = engineer_calls[1].kwargs["prompt"]
+        assert "Review summary:" in second_prompt

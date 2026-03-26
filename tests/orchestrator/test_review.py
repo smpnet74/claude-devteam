@@ -76,13 +76,21 @@ class TestGetReviewChain:
         chain = get_review_chain(WorkType.DOCUMENTATION)
         assert chain.gate_names == ["engineer_review"]
 
-    def test_documentation_gate_is_optional(self) -> None:
+    def test_documentation_gate_is_required(self) -> None:
         chain = get_review_chain(WorkType.DOCUMENTATION)
-        assert not chain.gates[0].required
+        assert chain.gates[0].required
 
     def test_code_gates_are_required(self) -> None:
         chain = get_review_chain(WorkType.CODE)
         assert all(g.required for g in chain.gates)
+
+    def test_documentation_gate_uses_assigned_to(self) -> None:
+        chain = get_review_chain(WorkType.DOCUMENTATION, assigned_to="frontend_engineer")
+        assert chain.gates[0].reviewer_role == "frontend_engineer"
+
+    def test_documentation_gate_default_reviewer(self) -> None:
+        chain = get_review_chain(WorkType.DOCUMENTATION)
+        assert chain.gates[0].reviewer_role == "backend_engineer"
 
 
 # ---------------------------------------------------------------------------
@@ -103,9 +111,20 @@ class TestSmallFixDetection:
     def test_non_code_work_type_always_false(self) -> None:
         assert not is_small_fix_with_no_behavior_change(WorkType.RESEARCH, ["README.md"])
 
-    def test_config_files_are_no_behavior_change(self) -> None:
-        assert is_small_fix_with_no_behavior_change(
+    def test_config_files_are_behavior_change(self) -> None:
+        """Config files (.toml, .json, .yml) can affect runtime behavior."""
+        assert not is_small_fix_with_no_behavior_change(
             WorkType.CODE, ["config.toml", "settings.json", "docker-compose.yml"]
+        )
+
+    def test_rst_files_are_no_behavior_change(self) -> None:
+        assert is_small_fix_with_no_behavior_change(
+            WorkType.CODE, ["docs/index.rst", "CHANGELOG.txt"]
+        )
+
+    def test_adoc_files_are_no_behavior_change(self) -> None:
+        assert is_small_fix_with_no_behavior_change(
+            WorkType.CODE, ["docs/guide.adoc"]
         )
 
     def test_empty_files_list(self) -> None:
@@ -172,7 +191,7 @@ class TestExecutePostPRReview:
             WorkType.CODE,
             "PR context",
             invoker,
-            files_changed=["README.md", "config.toml"],
+            files_changed=["README.md", "docs/guide.txt"],
         )
 
         assert result.all_passed
@@ -191,15 +210,13 @@ class TestExecutePostPRReview:
         assert result.all_passed
         assert "ceo_review" in result.gate_results
 
-    def test_documentation_optional_gate_failure_still_passes(self) -> None:
-        """Documentation gate is optional -- failure does not block."""
+    def test_documentation_required_gate_failure_blocks(self) -> None:
+        """Documentation gate is required -- failure blocks the chain."""
         invoker = MagicMock()
         invoker.invoke.return_value = _review("needs_revision")
 
         result = execute_post_pr_review(WorkType.DOCUMENTATION, "Docs PR", invoker)
 
-        # Gate failed but since it is not required, chain continues
-        # (only one gate for documentation, so chain is done)
         assert not result.all_passed
         assert "engineer_review" in result.failed_gates
 
@@ -253,3 +270,47 @@ class TestExecutePostPRReview:
 
         with pytest.raises(ValidationError, match="requires at least one comment"):
             execute_post_pr_review(WorkType.CODE, "PR context", invoker)
+
+    def test_all_passed_ignores_optional_gate_failures(self) -> None:
+        """all_passed should be True if only optional gates failed."""
+        from devteam.orchestrator.review import REVIEW_CHAINS, ReviewGate
+
+        # Temporarily patch CODE to have an optional gate
+        original = REVIEW_CHAINS[WorkType.CODE]
+        REVIEW_CHAINS[WorkType.CODE] = (
+            ReviewGate(name="qa_review", reviewer_role="qa_engineer", required=True),
+            ReviewGate(name="optional_check", reviewer_role="optional_reviewer", required=False),
+        )
+        try:
+            invoker = MagicMock()
+
+            def side_effect(role: str, prompt: str, **kwargs: object) -> dict[str, object]:
+                if role == "optional_reviewer":
+                    return _review("needs_revision")
+                return _review("approved")
+
+            invoker.invoke.side_effect = side_effect
+
+            result = execute_post_pr_review(WorkType.CODE, "PR context", invoker)
+
+            # Optional gate failed but all_passed should still be True
+            assert result.all_passed
+            assert "optional_check" in result.failed_gates
+        finally:
+            REVIEW_CHAINS[WorkType.CODE] = original
+
+    def test_documentation_uses_assigned_to(self) -> None:
+        """Documentation review should use the task's assigned_to role."""
+        invoker = MagicMock()
+        invoker.invoke.return_value = _review("approved")
+
+        result = execute_post_pr_review(
+            WorkType.DOCUMENTATION,
+            "Docs PR",
+            invoker,
+            assigned_to="frontend_engineer",
+        )
+
+        call_kwargs = invoker.invoke.call_args.kwargs
+        assert call_kwargs["role"] == "frontend_engineer"
+        assert result.all_passed
