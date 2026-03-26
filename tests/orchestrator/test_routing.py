@@ -95,6 +95,16 @@ class TestBuildRoutingPrompt:
         assert "## Plan" not in prompt
         assert "## Issue URL" not in prompt
 
+    def test_includes_repo_path_when_set(self):
+        ctx = IntakeContext(prompt="fix bug", repo_path="/home/user/myproject")
+        prompt = build_routing_prompt(ctx)
+        assert "Local repository: /home/user/myproject" in prompt
+
+    def test_omits_repo_path_when_none(self):
+        ctx = IntakeContext(prompt="fix bug")
+        prompt = build_routing_prompt(ctx)
+        assert "Local repository" not in prompt
+
 
 class TestRouteIntake:
     def test_fast_path_spec_and_plan(self):

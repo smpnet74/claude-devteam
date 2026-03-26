@@ -68,6 +68,8 @@ def build_routing_prompt(ctx: IntakeContext) -> str:
         parts.append(f"## Issue URL\n{ctx.issue_url}\n")
     if ctx.prompt:
         parts.append(f"## Request\n{ctx.prompt}\n")
+    if ctx.repo_path:
+        parts.append(f"Local repository: {ctx.repo_path}\n")
 
     parts.append(
         "## Routing Options\n"

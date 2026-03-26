@@ -40,57 +40,57 @@ def _make_task(
 
 class TestGetDefaultPeerReviewer:
     def test_backend_reviewed_by_frontend(self):
-        assert get_default_peer_reviewer("backend", "a") == "frontend"
+        assert get_default_peer_reviewer("backend_engineer", "a") == "frontend_engineer"
 
     def test_frontend_reviewed_by_backend(self):
-        assert get_default_peer_reviewer("frontend", "a") == "backend"
+        assert get_default_peer_reviewer("frontend_engineer", "a") == "backend_engineer"
 
     def test_devops_reviewed_by_backend(self):
-        assert get_default_peer_reviewer("devops", "a") == "backend"
+        assert get_default_peer_reviewer("devops_engineer", "a") == "backend_engineer"
 
     def test_data_reviewed_by_infra(self):
-        assert get_default_peer_reviewer("data", "b") == "infra"
+        assert get_default_peer_reviewer("data_engineer", "b") == "infra_engineer"
 
     def test_infra_reviewed_by_data(self):
-        assert get_default_peer_reviewer("infra", "b") == "data"
+        assert get_default_peer_reviewer("infra_engineer", "b") == "data_engineer"
 
     def test_tooling_reviewed_by_infra(self):
-        assert get_default_peer_reviewer("tooling", "b") == "infra"
+        assert get_default_peer_reviewer("tooling_engineer", "b") == "infra_engineer"
 
     def test_cloud_reviewed_by_infra(self):
-        assert get_default_peer_reviewer("cloud", "b") == "infra"
+        assert get_default_peer_reviewer("cloud_engineer", "b") == "infra_engineer"
 
     def test_unknown_role_returns_none(self):
         assert get_default_peer_reviewer("ceo", "a") is None
 
     def test_unknown_team_returns_none(self):
-        assert get_default_peer_reviewer("backend", "c") is None
+        assert get_default_peer_reviewer("backend_engineer", "c") is None
 
     def test_role_not_in_team_b_returns_none(self):
-        assert get_default_peer_reviewer("backend", "b") is None
+        assert get_default_peer_reviewer("backend_engineer", "b") is None
 
     def test_role_not_in_team_a_returns_none(self):
-        assert get_default_peer_reviewer("data", "a") is None
+        assert get_default_peer_reviewer("data_engineer", "a") is None
 
 
 class TestAssignPeerReviewers:
     def test_fills_defaults(self):
-        tasks = [_make_task("T-1", "backend", "a")]
+        tasks = [_make_task("T-1", "backend_engineer", "a")]
         assignments = assign_peer_reviewers(tasks)
-        assert assignments == {"T-1": "frontend"}
+        assert assignments == {"T-1": "frontend_engineer"}
 
     def test_explicit_overrides_default(self):
-        tasks = [_make_task("T-1", "backend", "a")]
-        assignments = assign_peer_reviewers(tasks, {"T-1": "devops"})
-        assert assignments == {"T-1": "devops"}
+        tasks = [_make_task("T-1", "backend_engineer", "a")]
+        assignments = assign_peer_reviewers(tasks, {"T-1": "devops_engineer"})
+        assert assignments == {"T-1": "devops_engineer"}
 
     def test_multiple_tasks(self):
         tasks = [
-            _make_task("T-1", "backend", "a"),
-            _make_task("T-2", "data", "b"),
+            _make_task("T-1", "backend_engineer", "a"),
+            _make_task("T-2", "data_engineer", "b"),
         ]
         assignments = assign_peer_reviewers(tasks)
-        assert assignments == {"T-1": "frontend", "T-2": "infra"}
+        assert assignments == {"T-1": "frontend_engineer", "T-2": "infra_engineer"}
 
     def test_no_reviewer_for_unknown_role(self):
         tasks = [_make_task("T-1", "ceo", "a")]
@@ -99,11 +99,11 @@ class TestAssignPeerReviewers:
 
     def test_preserves_explicit_and_fills_missing(self):
         tasks = [
-            _make_task("T-1", "backend", "a"),
-            _make_task("T-2", "frontend", "a"),
+            _make_task("T-1", "backend_engineer", "a"),
+            _make_task("T-2", "frontend_engineer", "a"),
         ]
-        assignments = assign_peer_reviewers(tasks, {"T-1": "devops"})
-        assert assignments == {"T-1": "devops", "T-2": "backend"}
+        assignments = assign_peer_reviewers(tasks, {"T-1": "devops_engineer"})
+        assert assignments == {"T-1": "devops_engineer", "T-2": "backend_engineer"}
 
     def test_empty_tasks(self):
         assignments = assign_peer_reviewers([])
@@ -127,6 +127,7 @@ class TestBuildDecompositionPrompt:
         routing = RoutingResult(path=RoutePath.FULL_PROJECT, reasoning="test")
         prompt = build_decomposition_prompt("spec", "plan", routing)
         assert "engineer role" in prompt
+        assert "backend_engineer" in prompt
         assert "dependencies" in prompt
         assert "PR groups" in prompt
         assert "parallel" in prompt.lower()
@@ -145,17 +146,17 @@ class TestValidateDecomposition:
     def test_valid_decomposition(self):
         result = DecompositionResult(
             tasks=[
-                _make_task("T-1", "backend", "a"),
-                _make_task("T-2", "frontend", "a", depends_on=["T-1"]),
+                _make_task("T-1", "backend_engineer", "a"),
+                _make_task("T-2", "frontend_engineer", "a", depends_on=["T-1"]),
             ],
-            peer_assignments={"T-1": "frontend", "T-2": "backend"},
+            peer_assignments={"T-1": "frontend_engineer", "T-2": "backend_engineer"},
             parallel_groups=[["T-1"], ["T-2"]],
         )
         assert validate_decomposition(result) == []
 
     def test_unknown_dependency(self):
         # Use model_construct to bypass Pydantic validation
-        t1 = _make_task("T-1", "backend", "a")
+        t1 = _make_task("T-1", "backend_engineer", "a")
         t1_bad = t1.model_copy(update={"depends_on": ["T-99"]})
         result = DecompositionResult.model_construct(
             tasks=[t1_bad],
@@ -167,16 +168,16 @@ class TestValidateDecomposition:
 
     def test_unknown_peer_assignment(self):
         result = DecompositionResult.model_construct(
-            tasks=[_make_task("T-1", "backend", "a")],
-            peer_assignments={"T-99": "frontend"},
+            tasks=[_make_task("T-1", "backend_engineer", "a")],
+            peer_assignments={"T-99": "frontend_engineer"},
             parallel_groups=[],
         )
         errors = validate_decomposition(result)
         assert any("unknown task T-99" in e for e in errors)
 
     def test_circular_dependency(self):
-        t1 = _make_task("T-1", "backend", "a")
-        t2 = _make_task("T-2", "frontend", "a")
+        t1 = _make_task("T-1", "backend_engineer", "a")
+        t2 = _make_task("T-2", "frontend_engineer", "a")
         t1_cycle = t1.model_copy(update={"depends_on": ["T-2"]})
         t2_cycle = t2.model_copy(update={"depends_on": ["T-1"]})
         result = DecompositionResult.model_construct(
@@ -189,7 +190,7 @@ class TestValidateDecomposition:
 
     def test_unknown_parallel_group_task(self):
         result = DecompositionResult.model_construct(
-            tasks=[_make_task("T-1", "backend", "a")],
+            tasks=[_make_task("T-1", "backend_engineer", "a")],
             peer_assignments={},
             parallel_groups=[["T-1", "T-99"]],
         )
@@ -198,7 +199,7 @@ class TestValidateDecomposition:
 
     def test_single_task_no_deps_valid(self):
         result = DecompositionResult(
-            tasks=[_make_task("T-1", "backend", "a")],
+            tasks=[_make_task("T-1", "backend_engineer", "a")],
             peer_assignments={},
             parallel_groups=[],
         )
@@ -208,10 +209,10 @@ class TestValidateDecomposition:
         """A diamond-shaped DAG: T-1 -> T-2, T-3 -> T-4."""
         result = DecompositionResult(
             tasks=[
-                _make_task("T-1", "backend", "a"),
-                _make_task("T-2", "frontend", "a", depends_on=["T-1"]),
-                _make_task("T-3", "devops", "a", depends_on=["T-1"]),
-                _make_task("T-4", "backend", "a", depends_on=["T-2", "T-3"]),
+                _make_task("T-1", "backend_engineer", "a"),
+                _make_task("T-2", "frontend_engineer", "a", depends_on=["T-1"]),
+                _make_task("T-3", "devops_engineer", "a", depends_on=["T-1"]),
+                _make_task("T-4", "backend_engineer", "a", depends_on=["T-2", "T-3"]),
             ],
             peer_assignments={},
             parallel_groups=[["T-2", "T-3"]],
@@ -222,7 +223,7 @@ class TestValidateDecomposition:
         """Pydantic model validators also catch unknown deps at construction."""
         with pytest.raises(ValueError, match="depends on unknown task"):
             DecompositionResult(
-                tasks=[_make_task("T-1", "backend", "a", depends_on=["T-99"])],
+                tasks=[_make_task("T-1", "backend_engineer", "a", depends_on=["T-99"])],
                 peer_assignments={},
                 parallel_groups=[],
             )
@@ -232,12 +233,44 @@ class TestValidateDecomposition:
         with pytest.raises(ValueError, match="Dependency cycle detected"):
             DecompositionResult(
                 tasks=[
-                    _make_task("T-1", "backend", "a", depends_on=["T-2"]),
-                    _make_task("T-2", "frontend", "a", depends_on=["T-1"]),
+                    _make_task("T-1", "backend_engineer", "a", depends_on=["T-2"]),
+                    _make_task("T-2", "frontend_engineer", "a", depends_on=["T-1"]),
                 ],
                 peer_assignments={},
                 parallel_groups=[],
             )
+
+    def test_invalid_assigned_to_role(self):
+        """Task with an invalid role slug is caught by validate_decomposition."""
+        t1 = _make_task("T-1", "backend_engineer", "a")
+        t1_bad = t1.model_copy(update={"assigned_to": "invalid_role"})
+        result = DecompositionResult.model_construct(
+            tasks=[t1_bad],
+            peer_assignments={},
+            parallel_groups=[],
+        )
+        errors = validate_decomposition(result)
+        assert any("unknown role 'invalid_role'" in e for e in errors)
+
+    def test_reviewer_same_as_assignee(self):
+        """Peer reviewer == assignee is caught by validate_decomposition."""
+        result = DecompositionResult.model_construct(
+            tasks=[_make_task("T-1", "backend_engineer", "a")],
+            peer_assignments={"T-1": "backend_engineer"},
+            parallel_groups=[],
+        )
+        errors = validate_decomposition(result)
+        assert any("same as assignee" in e for e in errors)
+
+    def test_invalid_reviewer_role_for_team(self):
+        """Reviewer from wrong team is caught by validate_decomposition."""
+        result = DecompositionResult.model_construct(
+            tasks=[_make_task("T-1", "backend_engineer", "a")],
+            peer_assignments={"T-1": "infra_engineer"},
+            parallel_groups=[],
+        )
+        errors = validate_decomposition(result)
+        assert any("not a valid reviewer for team a" in e for e in errors)
 
 
 class TestDecompose:
@@ -248,7 +281,7 @@ class TestDecompose:
                 {
                     "id": "T-1",
                     "description": "Build API",
-                    "assigned_to": "backend",
+                    "assigned_to": "backend_engineer",
                     "team": "a",
                     "depends_on": [],
                     "pr_group": "feat/api",
@@ -262,7 +295,7 @@ class TestDecompose:
         result = decompose("spec", "plan", routing, invoker)
 
         assert len(result.tasks) == 1
-        assert result.peer_assignments["T-1"] == "frontend"
+        assert result.peer_assignments["T-1"] == "frontend_engineer"
         invoker.invoke.assert_called_once()
 
     def test_invalid_ca_output_raises(self):
@@ -273,7 +306,7 @@ class TestDecompose:
                 {
                     "id": "T-1",
                     "description": "Build API",
-                    "assigned_to": "backend",
+                    "assigned_to": "backend_engineer",
                     "team": "a",
                     "depends_on": ["T-99"],
                     "pr_group": "feat/api",
@@ -294,20 +327,20 @@ class TestDecompose:
                 {
                     "id": "T-1",
                     "description": "Build API",
-                    "assigned_to": "backend",
+                    "assigned_to": "backend_engineer",
                     "team": "a",
                     "depends_on": [],
                     "pr_group": "feat/api",
                 },
             ],
-            "peer_assignments": {"T-1": "devops"},
+            "peer_assignments": {"T-1": "devops_engineer"},
             "parallel_groups": [["T-1"]],
         }
         routing = RoutingResult(path=RoutePath.FULL_PROJECT, reasoning="test")
         result = decompose("spec", "plan", routing, invoker)
 
         # Explicit assignment should override default
-        assert result.peer_assignments["T-1"] == "devops"
+        assert result.peer_assignments["T-1"] == "devops_engineer"
 
     def test_invokes_with_correct_role(self):
         invoker = MagicMock()
@@ -316,7 +349,7 @@ class TestDecompose:
                 {
                     "id": "T-1",
                     "description": "Build API",
-                    "assigned_to": "backend",
+                    "assigned_to": "backend_engineer",
                     "team": "a",
                     "depends_on": [],
                     "pr_group": "feat/api",
@@ -338,7 +371,7 @@ class TestDecompose:
                 {
                     "id": "T-1",
                     "description": "Set up database",
-                    "assigned_to": "data",
+                    "assigned_to": "data_engineer",
                     "team": "b",
                     "depends_on": [],
                     "pr_group": "database",
@@ -346,7 +379,7 @@ class TestDecompose:
                 {
                     "id": "T-2",
                     "description": "Build API",
-                    "assigned_to": "backend",
+                    "assigned_to": "backend_engineer",
                     "team": "a",
                     "depends_on": ["T-1"],
                     "pr_group": "api",
@@ -354,7 +387,7 @@ class TestDecompose:
                 {
                     "id": "T-3",
                     "description": "Build UI",
-                    "assigned_to": "frontend",
+                    "assigned_to": "frontend_engineer",
                     "team": "a",
                     "depends_on": ["T-2"],
                     "pr_group": "ui",
@@ -367,9 +400,9 @@ class TestDecompose:
         result = decompose("spec", "plan", routing, invoker)
 
         assert len(result.tasks) == 3
-        assert result.peer_assignments["T-1"] == "infra"  # data -> infra (team b)
-        assert result.peer_assignments["T-2"] == "frontend"  # backend -> frontend (team a)
-        assert result.peer_assignments["T-3"] == "backend"  # frontend -> backend (team a)
+        assert result.peer_assignments["T-1"] == "infra_engineer"
+        assert result.peer_assignments["T-2"] == "frontend_engineer"
+        assert result.peer_assignments["T-3"] == "backend_engineer"
 
     def test_work_type_preserved(self):
         invoker = MagicMock()
@@ -378,7 +411,7 @@ class TestDecompose:
                 {
                     "id": "T-1",
                     "description": "Research auth options",
-                    "assigned_to": "backend",
+                    "assigned_to": "backend_engineer",
                     "team": "a",
                     "depends_on": [],
                     "pr_group": "research",
@@ -392,6 +425,43 @@ class TestDecompose:
         result = decompose("spec", "plan", routing, invoker)
 
         assert result.tasks[0].work_type == WorkType.RESEARCH
+
+    def test_rejects_unsupported_route_small_fix(self):
+        """decompose() rejects SMALL_FIX routing."""
+        invoker = MagicMock()
+        routing = RoutingResult(path=RoutePath.SMALL_FIX, reasoning="test", target_team="a")
+        with pytest.raises(ValueError, match="only supports FULL_PROJECT and OSS_CONTRIBUTION"):
+            decompose("spec", "plan", routing, invoker)
+        invoker.invoke.assert_not_called()
+
+    def test_rejects_unsupported_route_research(self):
+        """decompose() rejects RESEARCH routing."""
+        invoker = MagicMock()
+        routing = RoutingResult(path=RoutePath.RESEARCH, reasoning="test")
+        with pytest.raises(ValueError, match="only supports FULL_PROJECT and OSS_CONTRIBUTION"):
+            decompose("spec", "plan", routing, invoker)
+        invoker.invoke.assert_not_called()
+
+    def test_accepts_oss_contribution_route(self):
+        """decompose() accepts OSS_CONTRIBUTION routing."""
+        invoker = MagicMock()
+        invoker.invoke.return_value = {
+            "tasks": [
+                {
+                    "id": "T-1",
+                    "description": "Fix upstream issue",
+                    "assigned_to": "backend_engineer",
+                    "team": "a",
+                    "depends_on": [],
+                    "pr_group": "feat/upstream",
+                },
+            ],
+            "peer_assignments": {},
+            "parallel_groups": [],
+        }
+        routing = RoutingResult(path=RoutePath.OSS_CONTRIBUTION, reasoning="test")
+        result = decompose("spec", "plan", routing, invoker)
+        assert len(result.tasks) == 1
 
 
 class TestDecomposeInvokerFailure:

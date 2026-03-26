@@ -211,6 +211,24 @@ class DecompositionResult(BaseModel):
             for tid in group:
                 if tid not in task_ids:
                     raise ValueError(f"parallel_groups references unknown task {tid}")
+        # Check no task appears in multiple parallel_groups
+        seen_in_groups: set[str] = set()
+        for group in self.parallel_groups:
+            for tid in group:
+                if tid in seen_in_groups:
+                    raise ValueError(f"Task {tid} appears in multiple parallel_groups")
+                seen_in_groups.add(tid)
+        # Check tasks in the same parallel_group don't depend on each other
+        for group in self.parallel_groups:
+            group_set = set(group)
+            for task in self.tasks:
+                if task.id in group_set:
+                    for dep in task.depends_on:
+                        if dep in group_set:
+                            raise ValueError(
+                                f"Tasks {task.id} and {dep} are in the same parallel_group "
+                                f"but {task.id} depends on {dep}"
+                            )
         # Detect dependency cycles via DFS
         visited: set[str] = set()
         in_stack: set[str] = set()
@@ -262,3 +280,13 @@ class RoutingResult(BaseModel):
         default=None,
         description="For small_fix: which team to route to directly",
     )
+
+    @model_validator(mode="after")
+    def _validate_target_team(self) -> RoutingResult:
+        if self.path == RoutePath.SMALL_FIX:
+            if self.target_team not in ("a", "b"):
+                raise ValueError("target_team must be 'a' or 'b' for small_fix routing")
+        else:
+            if self.target_team is not None:
+                raise ValueError(f"target_team must be None for {self.path.value} routing")
+        return self
