@@ -154,7 +154,16 @@ def stop_daemon(pid_path: Path, port_path: Path, *, force: bool = False) -> int:
         raise DaemonNotRunningError()
 
     sig = signal.SIGKILL if force else signal.SIGTERM
-    os.kill(pid, sig)
+    try:
+        os.kill(pid, sig)
+    except ProcessLookupError:
+        # Process exited between our alive-check and the kill call
+        release_pid_lock(pid_path)
+        try:
+            port_path.unlink()
+        except FileNotFoundError:
+            pass
+        return pid
 
     # Wait for process to exit before cleaning up files
     deadline = time.monotonic() + _STOP_TIMEOUT_SECONDS
@@ -163,7 +172,10 @@ def stop_daemon(pid_path: Path, port_path: Path, *, force: bool = False) -> int:
 
     # If still alive after SIGTERM, escalate to SIGKILL
     if _is_process_alive(pid) and not force:
-        os.kill(pid, signal.SIGKILL)
+        try:
+            os.kill(pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass  # Process already dead
         deadline = time.monotonic() + _STOP_TIMEOUT_SECONDS
         while _is_process_alive(pid) and time.monotonic() < deadline:
             time.sleep(_STOP_POLL_INTERVAL)

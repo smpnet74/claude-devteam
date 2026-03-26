@@ -109,6 +109,12 @@ class TestQuestionTransitions:
         with pytest.raises(InvalidTransitionError):
             validate_question_transition(QuestionStatus.RESOLVED, QuestionStatus.RAISED)
 
+    def test_cannot_leave_escalated_to_human(self) -> None:
+        with pytest.raises(InvalidTransitionError):
+            validate_question_transition(
+                QuestionStatus.ESCALATED_TO_HUMAN, QuestionStatus.ESCALATED_TO_SUPERVISOR
+            )
+
 
 class TestPRTransitions:
     def test_valid_forward_flow(self) -> None:

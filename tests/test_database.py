@@ -30,3 +30,11 @@ class TestDatabaseInit:
         config1 = init_database(tmp_devteam_home)
         config2 = init_database(tmp_devteam_home)
         assert config1.db_path == config2.db_path
+
+    def test_init_creates_parent_directory(self, tmp_path: Path) -> None:
+        """init_database creates the parent directory if it does not exist."""
+        nonexistent_home = tmp_path / "does" / "not" / "exist"
+        assert not nonexistent_home.exists()
+        config = init_database(nonexistent_home)
+        assert nonexistent_home.exists()
+        assert config.db_path.parent == nonexistent_home

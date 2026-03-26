@@ -21,13 +21,13 @@ from pydantic import BaseModel, Field, ValidationError, model_validator
 class DaemonConfig(BaseModel):
     """Daemon process configuration."""
 
-    port: int = 7432
+    port: int = Field(default=7432, gt=0, le=65535)
 
 
 class GeneralConfig(BaseModel):
     """General operational settings."""
 
-    max_concurrent_agents: int = 3
+    max_concurrent_agents: int = Field(default=3, gt=0)
 
 
 class ModelsConfig(BaseModel):
@@ -73,14 +73,14 @@ class KnowledgeConfig(BaseModel):
 class RateLimitConfig(BaseModel):
     """Rate limit handling configuration."""
 
-    default_backoff_seconds: int = 1800
+    default_backoff_seconds: int = Field(default=1800, gt=0)
 
 
 class PRConfig(BaseModel):
     """PR lifecycle configuration."""
 
-    max_fix_iterations: int = 5
-    ci_poll_interval_seconds: int = 60
+    max_fix_iterations: int = Field(default=5, gt=0)
+    ci_poll_interval_seconds: int = Field(default=60, gt=0)
 
 
 class GitConfig(BaseModel):
@@ -207,12 +207,12 @@ def merge_configs(
     merged_data = global_config.model_dump()
 
     # Merge approval overrides from project
-    project_approval = project_config.approval.model_dump(exclude_defaults=True)
+    project_approval = project_config.approval.model_dump(exclude_unset=True)
     for key, value in project_approval.items():
         merged_data["approval"][key] = value
 
     # Merge execution overrides from project
-    project_execution = project_config.execution.model_dump(exclude_defaults=True)
+    project_execution = project_config.execution.model_dump(exclude_unset=True)
     for key, value in project_execution.items():
         merged_data["execution"][key] = value
 

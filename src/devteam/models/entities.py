@@ -220,6 +220,13 @@ class PRGroup(BaseModel):
     fix_iterations: int = 0
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
+    @field_validator("job_id")
+    @classmethod
+    def validate_job_id(cls, v: str) -> str:
+        if not JOB_ID_PATTERN.match(v):
+            raise ValueError(f"Job ID must match W-N format, got: {v}")
+        return v
+
     @field_validator("task_ids")
     @classmethod
     def validate_task_ids_not_empty(cls, v: list[str]) -> list[str]:

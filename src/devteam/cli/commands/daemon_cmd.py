@@ -64,12 +64,16 @@ def start(
             "--port",
             str(port),
         ]
-        proc = subprocess.Popen(
-            cmd,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            start_new_session=True,
-        )
+        try:
+            proc = subprocess.Popen(
+                cmd,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                start_new_session=True,
+            )
+        except OSError as e:
+            typer.echo(f"Error: failed to start daemon process: {e}")
+            raise typer.Exit(code=1)
         time.sleep(0.5)
         state = get_daemon_state(pid_path, port_path)
         if state.running:
@@ -93,6 +97,9 @@ def stop(
         typer.echo(f"Daemon stopped (PID {pid})")
     except DaemonNotRunningError:
         typer.echo("Daemon is not running.")
+        raise typer.Exit(code=1)
+    except (OSError, RuntimeError) as e:
+        typer.echo(f"Error: failed to stop daemon: {e}")
         raise typer.Exit(code=1)
 
 
