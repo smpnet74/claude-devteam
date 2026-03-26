@@ -10,5 +10,12 @@ services:
     command: start --user root --pass root surrealkv:/data/devteam.db
     restart: unless-stopped
 
+  surrealist:
+    image: surrealdb/surrealist:latest
+    container_name: devteam-surrealist
+    ports:
+      - "8001:8080"
+    restart: unless-stopped
+
 volumes:
   surrealdb-data:
