@@ -86,3 +86,87 @@ class TestProjectCommands:
         result = runner.invoke(app, ["project", "remove", "myapp"])
         assert result.exit_code == 0
         assert "not yet implemented" in result.output.lower()
+
+
+class TestJobCommands:
+    def test_start_help(self) -> None:
+        result = runner.invoke(app, ["start", "--help"])
+        assert result.exit_code == 0
+        assert "spec" in result.output.lower() or "plan" in result.output.lower()
+
+    def test_start_stub(self) -> None:
+        result = runner.invoke(app, ["start", "--spec", "/tmp/spec.md", "--plan", "/tmp/plan.md"])
+        assert result.exit_code == 0
+        assert "not yet implemented" in result.output.lower()
+
+    def test_start_with_prompt(self) -> None:
+        result = runner.invoke(app, ["start", "--prompt", "Fix the bug"])
+        assert result.exit_code == 0
+        assert "not yet implemented" in result.output.lower()
+
+    def test_start_with_issue(self) -> None:
+        result = runner.invoke(
+            app, ["start", "--issue", "https://github.com/org/repo/issues/42"]
+        )
+        assert result.exit_code == 0
+        assert "not yet implemented" in result.output.lower()
+
+    def test_status_stub(self) -> None:
+        result = runner.invoke(app, ["status"])
+        assert result.exit_code == 0
+
+    def test_status_with_job_id(self) -> None:
+        result = runner.invoke(app, ["status", "W-1"])
+        assert result.exit_code == 0
+
+    def test_status_with_task_id(self) -> None:
+        result = runner.invoke(app, ["status", "W-1/T-3"])
+        assert result.exit_code == 0
+
+    def test_status_questions_flag(self) -> None:
+        result = runner.invoke(app, ["status", "--questions"])
+        assert result.exit_code == 0
+
+    def test_stop_stub(self) -> None:
+        result = runner.invoke(app, ["stop"])
+        assert result.exit_code == 0
+        assert "not yet implemented" in result.output.lower()
+
+    def test_stop_with_job_id(self) -> None:
+        result = runner.invoke(app, ["stop", "W-1"])
+        assert result.exit_code == 0
+
+    def test_pause_stub(self) -> None:
+        result = runner.invoke(app, ["pause", "W-1"])
+        assert result.exit_code == 0
+        assert "not yet implemented" in result.output.lower()
+
+    def test_resume_stub(self) -> None:
+        result = runner.invoke(app, ["resume", "W-1"])
+        assert result.exit_code == 0
+        assert "not yet implemented" in result.output.lower()
+
+    def test_cancel_stub(self) -> None:
+        result = runner.invoke(app, ["cancel", "W-1"])
+        assert result.exit_code == 0
+        assert "not yet implemented" in result.output.lower()
+
+    def test_cancel_revert_merged(self) -> None:
+        result = runner.invoke(app, ["cancel", "W-1", "--revert-merged"])
+        assert result.exit_code == 0
+
+
+class TestFocusCommand:
+    def test_focus_set(self) -> None:
+        result = runner.invoke(app, ["focus", "W-1"])
+        assert result.exit_code == 0
+        assert "not yet implemented" in result.output.lower()
+
+    def test_focus_clear(self) -> None:
+        result = runner.invoke(app, ["focus", "--clear"])
+        assert result.exit_code == 0
+        assert "not yet implemented" in result.output.lower()
+
+    def test_focus_show(self) -> None:
+        result = runner.invoke(app, ["focus"])
+        assert result.exit_code == 0
