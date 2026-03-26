@@ -26,6 +26,10 @@ def start(
     foreground: bool = typer.Option(False, "--foreground", "-f", help="Run in foreground"),
 ) -> None:
     """Start the devteam daemon."""
+    if port <= 0 or port > 65535:
+        typer.echo("Error: port must be between 1 and 65535")
+        raise typer.Exit(code=1)
+
     home = get_devteam_home()
     pid_path = home / "daemon.pid"
     port_path = home / "daemon.port"

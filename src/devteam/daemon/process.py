@@ -72,6 +72,18 @@ def read_pid_file(pid_path: Path) -> int | None:
         return None
 
 
+def _release_stale_lock(pid_path: Path, stale_pid: int) -> bool:
+    """Remove a stale PID lock only if it still contains the expected stale PID.
+
+    Returns True if the lock was removed, False if it was replaced.
+    """
+    current = read_pid_file(pid_path)
+    if current == stale_pid:
+        release_pid_lock(pid_path)
+        return True
+    return False
+
+
 def acquire_pid_lock(pid_path: Path, new_pid: int) -> None:
     """Acquire the singleton daemon lock atomically using O_EXCL.
 
@@ -90,8 +102,13 @@ def acquire_pid_lock(pid_path: Path, new_pid: int) -> None:
             existing_pid = read_pid_file(pid_path)
             if existing_pid is not None and _is_process_alive(existing_pid):
                 raise DaemonAlreadyRunningError(existing_pid)
-            # Stale lock -- remove and retry
-            release_pid_lock(pid_path)
+            # Stale lock -- verify it hasn't been replaced, then remove and retry
+            stale_pid = existing_pid if existing_pid is not None else 0
+            if not _release_stale_lock(pid_path, stale_pid):
+                # Another process replaced the lock between our check and removal
+                current = read_pid_file(pid_path)
+                if current is not None:
+                    raise DaemonAlreadyRunningError(current)
 
     # Should not reach here, but guard against infinite loop
     raise RuntimeError("Failed to acquire PID lock after stale recovery")
@@ -112,8 +129,9 @@ def _cleanup_if_owner(pid_path: Path, port_path: Path, expected_pid: int) -> Non
     dying and our cleanup running — we must not delete the new daemon's files.
     """
     current_pid = read_pid_file(pid_path)
-    if current_pid == expected_pid:
-        release_pid_lock(pid_path)
+    if current_pid != expected_pid:
+        return  # Another daemon owns these files
+    release_pid_lock(pid_path)
     try:
         port_path.unlink()
     except FileNotFoundError:

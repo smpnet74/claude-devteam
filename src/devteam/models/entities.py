@@ -13,7 +13,7 @@ import re
 from datetime import datetime, timezone
 from enum import Enum
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, ValidationInfo, field_validator
 
 
 # --- Status Enums ---
@@ -155,10 +155,13 @@ class Task(BaseModel):
 
     @field_validator("depends_on")
     @classmethod
-    def validate_depends_on(cls, v: list[str]) -> list[str]:
+    def validate_depends_on(cls, v: list[str], info: ValidationInfo) -> list[str]:
+        task_id = info.data.get("task_id")
         for tid in v:
             if not TASK_ID_PATTERN.match(tid):
                 raise ValueError(f"depends_on task ID must match T-N format, got: {tid}")
+            if tid == task_id:
+                raise ValueError(f"Task cannot depend on itself: {tid}")
         return v
 
     @property

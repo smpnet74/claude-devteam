@@ -328,6 +328,17 @@ class TestDependsOnValidation:
                 depends_on=["invalid"],
             )
 
+    def test_task_rejects_self_dependency(self) -> None:
+        with pytest.raises(ValueError, match="Task cannot depend on itself"):
+            Task(
+                task_id="T-1",
+                job_id="W-1",
+                description="x",
+                assigned_to="backend",
+                app="api",
+                depends_on=["T-1"],
+            )
+
 
 class TestZeroIdRejection:
     def test_job_rejects_zero_id(self) -> None:

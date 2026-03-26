@@ -60,7 +60,7 @@ def init_devteam_home(home: Path) -> bool:
     Returns True if newly created, False if already existed.
     """
     created = not home.exists()
-    home.mkdir(exist_ok=True)
+    home.mkdir(parents=True, exist_ok=True)
 
     for d in DIRS:
         (home / d).mkdir(exist_ok=True)
