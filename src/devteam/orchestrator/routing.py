@@ -75,9 +75,10 @@ def build_routing_prompt(ctx: IntakeContext) -> str:
         "## Routing Options\n"
         "- full_project: Has spec+plan or needs full decomposition\n"
         "- research: Research request, deliverable back to human\n"
-        "- small_fix: Clear scope, single engineer can handle it\n"
+        "- small_fix: Clear scope, single engineer can handle it. "
+        "You MUST include target_team ('a' or 'b') for this path.\n"
         "- oss_contribution: Contributing to an external open-source project\n"
-        "\nReturn the routing path and your reasoning."
+        "\nReturn the routing path, your reasoning, and target_team if applicable."
     )
     return "\n".join(parts)
 

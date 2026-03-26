@@ -3,18 +3,20 @@ services:
     image: surrealdb/surrealdb:v3.0.4
     container_name: devteam-surrealdb
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"
     volumes:
       - surrealdb-data:/data
-    user: root
-    command: start --user root --pass root surrealkv:/data/devteam.db
+    environment:
+      - SURREAL_USER=${SURREAL_USER:-root}
+      - SURREAL_PASS=${SURREAL_PASS:-root}
+    command: start --user $${SURREAL_USER} --pass $${SURREAL_PASS} surrealkv:/data/devteam.db
     restart: unless-stopped
 
   surrealist:
-    image: surrealdb/surrealist:latest
+    image: surrealdb/surrealist:v3.1.1
     container_name: devteam-surrealist
     ports:
-      - "8001:8080"
+      - "127.0.0.1:8001:8080"
     restart: unless-stopped
 
 volumes:

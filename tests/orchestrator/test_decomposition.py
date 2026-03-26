@@ -250,7 +250,19 @@ class TestValidateDecomposition:
             parallel_groups=[],
         )
         errors = validate_decomposition(result)
-        assert any("unknown role 'invalid_role'" in e for e in errors)
+        assert any("non-assignable role 'invalid_role'" in e for e in errors)
+
+    def test_executive_role_not_assignable(self):
+        """Executive roles (ceo, chief_architect, em_*) cannot be assigned tasks."""
+        t1 = _make_task("T-1", "backend_engineer", "a")
+        t1_bad = t1.model_copy(update={"assigned_to": "ceo"})
+        result = DecompositionResult.model_construct(
+            tasks=[t1_bad],
+            peer_assignments={},
+            parallel_groups=[],
+        )
+        errors = validate_decomposition(result)
+        assert any("non-assignable role 'ceo'" in e for e in errors)
 
     def test_reviewer_same_as_assignee(self):
         """Peer reviewer == assignee is caught by validate_decomposition."""

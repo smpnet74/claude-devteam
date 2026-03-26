@@ -38,6 +38,24 @@ VALID_AGENT_ROLES: frozenset[str] = frozenset(
     }
 )
 
+# Roles that can be assigned tasks by the CA during decomposition.
+# Excludes executive/management roles (ceo, chief_architect, em_*) and
+# cross-cutting roles (qa_engineer, security_engineer, tech_writer) that
+# are invoked by the orchestrator directly, not assigned decomposition tasks.
+ASSIGNABLE_ROLES: frozenset[str] = frozenset(
+    {
+        "backend_engineer",
+        "cloud_engineer",
+        "data_engineer",
+        "devops_engineer",
+        "frontend_engineer",
+        "infra_engineer",
+        "planner_researcher_a",
+        "planner_researcher_b",
+        "tooling_engineer",
+    }
+)
+
 # Peer review assignment table from the design spec.
 # Each team maps engineer roles to their preferred peer reviewers.
 PEER_REVIEW_MAP_TEAM_A: dict[str, list[str]] = {
@@ -94,6 +112,7 @@ def build_decomposition_prompt(
         "(backend_engineer, frontend_engineer, devops_engineer, "
         "data_engineer, infra_engineer, tooling_engineer, cloud_engineer)\n"
         "- Assign each task to team 'a' or 'b'\n"
+        "- Set work_type for each task: code, research, planning, architecture, or documentation\n"
         "- Define dependencies between tasks (task IDs)\n"
         "- Group tasks into PR groups (tasks that ship together)\n"
         "- Identify parallel groups (tasks that can run simultaneously)\n"
@@ -139,10 +158,10 @@ def validate_decomposition(result: DecompositionResult) -> list[str]:
             if dep not in task_ids:
                 errors.append(f"Task {task.id} depends on unknown task {dep}")
 
-    # Validate assigned_to is a valid agent role
+    # Validate assigned_to is an assignable role (not executive/management)
     for task in result.tasks:
-        if task.assigned_to not in VALID_AGENT_ROLES:
-            errors.append(f"Task {task.id} assigned to unknown role '{task.assigned_to}'")
+        if task.assigned_to not in ASSIGNABLE_ROLES:
+            errors.append(f"Task {task.id} assigned to non-assignable role '{task.assigned_to}'")
 
     # Check peer assignments reference valid tasks
     for task_id in result.peer_assignments:
