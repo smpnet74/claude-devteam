@@ -38,6 +38,15 @@ class TestCopyAgentsToProject:
         with pytest.raises(FileNotFoundError):
             copy_agents_to_project(global_agents, tmp_path / "nonexistent")
 
+    def test_empty_global_agents_dir_raises(self, tmp_path):
+        """Global agents dir exists but has no .md files."""
+        empty_global = tmp_path / "empty_agents"
+        empty_global.mkdir()
+        project_dir = tmp_path / "my-project"
+        project_dir.mkdir()
+        with pytest.raises(FileNotFoundError, match="No agent template files"):
+            copy_agents_to_project(empty_global, project_dir)
+
     def test_preserves_existing_project_agents(self, tmp_path):
         global_agents = self._setup_global_agents(tmp_path)
         project_dir = tmp_path / "my-project"

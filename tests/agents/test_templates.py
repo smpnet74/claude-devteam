@@ -6,23 +6,35 @@ from devteam.agents.template_manager import get_bundled_templates_dir
 
 TEMPLATES_DIR = get_bundled_templates_dir()
 
+_FULL_TOOLS = (
+    "Read",
+    "Edit",
+    "Write",
+    "Bash",
+    "Glob",
+    "Grep",
+    "WebSearch",
+    "WebFetch",
+    "query_knowledge",
+)
+
 EXPECTED_AGENTS = {
     "ceo": ("opus", ("Read", "Glob", "Grep")),
-    "chief_architect": ("opus", 9),
-    "planner_researcher_a": ("sonnet", 9),
-    "planner_researcher_b": ("sonnet", 9),
-    "em_team_a": ("sonnet", 9),
-    "em_team_b": ("sonnet", 9),
-    "backend_engineer": ("sonnet", 9),
-    "frontend_engineer": ("sonnet", 9),
-    "devops_engineer": ("sonnet", 9),
-    "data_engineer": ("sonnet", 9),
-    "infra_engineer": ("sonnet", 9),
-    "tooling_engineer": ("sonnet", 9),
-    "cloud_engineer": ("sonnet", 9),
-    "qa_engineer": ("haiku", 9),
-    "security_engineer": ("haiku", 9),
-    "tech_writer": ("haiku", 9),
+    "chief_architect": ("opus", _FULL_TOOLS),
+    "planner_researcher_a": ("sonnet", _FULL_TOOLS),
+    "planner_researcher_b": ("sonnet", _FULL_TOOLS),
+    "em_team_a": ("sonnet", _FULL_TOOLS),
+    "em_team_b": ("sonnet", _FULL_TOOLS),
+    "backend_engineer": ("sonnet", _FULL_TOOLS),
+    "frontend_engineer": ("sonnet", _FULL_TOOLS),
+    "devops_engineer": ("sonnet", _FULL_TOOLS),
+    "data_engineer": ("sonnet", _FULL_TOOLS),
+    "infra_engineer": ("sonnet", _FULL_TOOLS),
+    "tooling_engineer": ("sonnet", _FULL_TOOLS),
+    "cloud_engineer": ("sonnet", _FULL_TOOLS),
+    "qa_engineer": ("haiku", _FULL_TOOLS),
+    "security_engineer": ("haiku", _FULL_TOOLS),
+    "tech_writer": ("haiku", _FULL_TOOLS),
 }
 
 
@@ -47,12 +59,9 @@ class TestAgentTemplates:
         assert defn.model == expected_model, (
             f"{role}: expected model {expected_model}, got {defn.model}"
         )
-        if isinstance(expected_tools, tuple):
-            assert defn.tools == expected_tools, f"{role}: tools mismatch"
-        else:
-            assert len(defn.tools) == expected_tools, (
-                f"{role}: expected {expected_tools} tools, got {len(defn.tools)}"
-            )
+        assert set(defn.tools) == set(expected_tools), (
+            f"{role}: tools mismatch — expected {set(expected_tools)}, got {set(defn.tools)}"
+        )
 
     @pytest.mark.parametrize("role", EXPECTED_AGENTS.keys())
     def test_agent_has_nonempty_prompt(self, role):

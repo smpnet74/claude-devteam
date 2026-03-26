@@ -95,8 +95,8 @@ reviews:
 
     - path: "src/devteam/agents/**"
       instructions: >
-        Agent registry, invoker, and contracts. Verify SDK call shape uses query(prompt=, options=QueryOptions(...)). Check invoker
-        fails closed on unmapped roles. Verify contract cross-field validators enforce invariants (comments for revision, DAG integrity).
+        Agent registry, invoker, and contracts. Verify SDK call uses query(prompt=, options=QueryOptions(...)). Check invoker fails
+        closed on unmapped roles. Verify contract cross-field validators enforce invariants (comments for revision, DAG integrity).
 
     - path: "src/devteam/templates/**"
       instructions: >

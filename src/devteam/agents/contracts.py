@@ -53,7 +53,7 @@ class ReviewComment(BaseModel):
     """A single review comment on a specific file location."""
 
     file: str = Field(min_length=1, description="Path to the file being commented on")
-    line: int = Field(ge=1, description="Line number of the comment")
+    line: int = Field(ge=1, le=1_000_000, description="Line number of the comment")
     severity: Literal["error", "warning", "nitpick"] = Field(
         description="Severity level of the comment",
     )

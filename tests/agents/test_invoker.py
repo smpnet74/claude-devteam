@@ -330,6 +330,81 @@ class TestSdkCallShape:
             assert opts.output_format is not None
 
 
+class TestSdkErrorHandling:
+    """Verify handling of SDK-level errors and structured output."""
+
+    @pytest.mark.asyncio
+    async def test_invoke_raises_on_sdk_error(self, invoker, context):
+        """When SDK returns is_error=True, invoke should raise InvocationError."""
+        mock_result = MagicMock()
+        mock_result.is_error = True
+        mock_result.result = "Something went wrong in the agent"
+        mock_result.structured_output = None
+
+        with patch(_MOCK_TARGET, new_callable=AsyncMock) as mock_run:
+            mock_run.return_value = mock_result
+            with pytest.raises(InvocationError, match="returned an error"):
+                await invoker.invoke(
+                    role="backend_engineer",
+                    task_prompt="Build auth endpoint",
+                    context=context,
+                )
+
+    @pytest.mark.asyncio
+    async def test_invoke_uses_structured_output(self, invoker, context):
+        """When SDK returns structured_output, it should be preferred over raw result."""
+        structured_data = {
+            "status": "completed",
+            "question": None,
+            "files_changed": ["src/structured.py"],
+            "tests_added": [],
+            "summary": "Used structured output",
+            "confidence": "high",
+        }
+        mock_result = MagicMock()
+        mock_result.is_error = False
+        mock_result.structured_output = structured_data
+        # raw result is different — should NOT be used
+        mock_result.result = json.dumps(
+            {
+                "status": "completed",
+                "question": None,
+                "files_changed": ["src/raw.py"],
+                "tests_added": [],
+                "summary": "Used raw result",
+                "confidence": "low",
+            }
+        )
+
+        with patch(_MOCK_TARGET, new_callable=AsyncMock) as mock_run:
+            mock_run.return_value = mock_result
+            result = await invoker.invoke(
+                role="backend_engineer",
+                task_prompt="Build auth endpoint",
+                context=context,
+            )
+            assert isinstance(result, ImplementationResult)
+            assert result.files_changed == ["src/structured.py"]
+            assert result.summary == "Used structured output"
+
+    @pytest.mark.asyncio
+    async def test_invoke_raises_on_timeout(self, invoker, context):
+        """When SDK call times out, InvocationError should be raised."""
+        import asyncio
+
+        async def slow_query(*args, **kwargs):
+            await asyncio.sleep(10)
+
+        with patch(_MOCK_TARGET, new_callable=AsyncMock) as mock_run:
+            mock_run.side_effect = InvocationError("Agent query timed out after 1.0 seconds")
+            with pytest.raises(InvocationError, match="timed out"):
+                await invoker.invoke(
+                    role="backend_engineer",
+                    task_prompt="Build auth endpoint",
+                    context=context,
+                )
+
+
 class TestUnknownRoleFailsClosed:
     """Unknown roles must raise InvocationError, not silently default."""
 
@@ -340,3 +415,13 @@ class TestUnknownRoleFailsClosed:
     def test_schema_for_role_unknown_raises(self, invoker):
         with pytest.raises(InvocationError, match="No output schema mapped for role"):
             invoker.schema_for_role("totally_unknown_role")
+
+    @pytest.mark.asyncio
+    async def test_invoke_unknown_role_raises(self, invoker, context):
+        """End-to-end: invoke() with an unknown role raises InvocationError."""
+        with pytest.raises((InvocationError, KeyError)):
+            await invoker.invoke(
+                role="totally_unknown_role",
+                task_prompt="Do something",
+                context=context,
+            )

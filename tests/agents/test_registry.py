@@ -238,3 +238,14 @@ class TestAgentRegistry:
         (agents_dir / "broken.md").write_text(MISSING_MODEL_MD)
         with pytest.raises(ValueError, match="model"):
             AgentRegistry.load(agents_dir)
+
+    def test_symlinked_md_files_are_skipped(self, tmp_path):
+        """Symlinked .md files in the agents dir should be ignored."""
+        agents_dir = tmp_path / "agents"
+        agents_dir.mkdir()
+        real_file = tmp_path / "real_agent.md"
+        real_file.write_text(SAMPLE_AGENT_MD)
+        (agents_dir / "symlinked.md").symlink_to(real_file)
+        # No real .md files, only a symlink — should load empty
+        registry = AgentRegistry.load(agents_dir)
+        assert len(registry) == 0

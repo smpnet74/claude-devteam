@@ -52,6 +52,8 @@ def copy_agent_templates(
         if src_file.is_symlink():
             continue
         dest_file = dest_dir / src_file.name
+        if dest_file.is_symlink():
+            dest_file.unlink()  # Remove symlink, don't follow it
         if dest_file.exists() and not overwrite:
             continue
         shutil.copy2(src_file, dest_file)
@@ -98,6 +100,8 @@ def copy_agents_to_project(
         if src_file.is_symlink():
             continue
         dest_file = dest_dir / src_file.name
+        if dest_file.is_symlink():
+            dest_file.unlink()  # Remove symlink, don't follow it
         if dest_file.exists() and not overwrite:
             continue
         shutil.copy2(src_file, dest_file)

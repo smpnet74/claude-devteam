@@ -141,6 +141,8 @@ class AgentRegistry:
 
         agents: dict[str, AgentDefinition] = {}
         for md_file in sorted(agents_dir.glob("*.md")):
+            if md_file.is_symlink():
+                continue
             role = md_file.stem  # filename without extension
             content = md_file.read_text(encoding="utf-8")
             defn = AgentDefinition.from_markdown(content, role)

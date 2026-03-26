@@ -6,6 +6,7 @@ structured output schema) from the agent registry and executes the query.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from dataclasses import dataclass, field
@@ -38,6 +39,7 @@ class InvocationContext:
 
     worktree_path: Path
     project_name: str
+    timeout: float = 300.0
 
 
 @dataclass(frozen=True)
@@ -61,6 +63,8 @@ class QueryOptions:
 _ROLE_SCHEMA_MAP: dict[str, type[BaseModel]] = {
     "ceo": RoutingResult,
     "chief_architect": DecompositionResult,
+    # TODO(phase-3): Planners produce research reports, not implementations.
+    # Create a ResearchResult contract in Phase 3 and update this mapping.
     "planner_researcher_a": ImplementationResult,
     "planner_researcher_b": ImplementationResult,
     "em_team_a": ReviewResult,
@@ -82,7 +86,7 @@ _ENGINEER_ROLES = {
 }
 
 
-async def _run_query(prompt: str, options: QueryOptions) -> _ResultMessage:
+async def _run_query(prompt: str, options: QueryOptions, timeout: float = 300.0) -> _ResultMessage:
     """Execute the Claude Agent SDK query and return the final ResultMessage.
 
     The SDK's query() returns an AsyncIterator of messages. We consume the
@@ -100,19 +104,32 @@ async def _run_query(prompt: str, options: QueryOptions) -> _ResultMessage:
     # QueryOptions.cwd -> ClaudeAgentOptions.cwd
     # QueryOptions.output_format -> ClaudeAgentOptions.output_format
     # The _run_query method handles this translation.
+
+    Args:
+        prompt: The prompt to send to the SDK.
+        options: Query options for the SDK call.
+        timeout: Maximum seconds to wait for the SDK call to complete.
+
+    Raises:
+        InvocationError: If the query times out or returns no ResultMessage.
     """
     from claude_agent_sdk import ResultMessage, query
 
-    result_msg: ResultMessage | None = None
-    sdk_options: Any = options  # Cast local QueryOptions to Any for SDK call
-    async for message in query(prompt=prompt, options=sdk_options):
-        if isinstance(message, ResultMessage):
-            result_msg = message
+    async def _consume_stream() -> ResultMessage:
+        result_msg: ResultMessage | None = None
+        sdk_options: Any = options  # Cast local QueryOptions to Any for SDK call
+        async for message in query(prompt=prompt, options=sdk_options):
+            if isinstance(message, ResultMessage):
+                result_msg = message
 
-    if result_msg is None:
-        raise InvocationError("Agent query returned no ResultMessage")
+        if result_msg is None:
+            raise InvocationError("Agent query returned no ResultMessage")
+        return result_msg
 
-    return result_msg
+    try:
+        return await asyncio.wait_for(_consume_stream(), timeout=timeout)
+    except asyncio.TimeoutError:
+        raise InvocationError(f"Agent query timed out after {timeout} seconds") from None
 
 
 class AgentInvoker:
@@ -225,6 +242,7 @@ class AgentInvoker:
             sdk_result = await _run_query(
                 prompt=params["prompt"],
                 options=params["options"],
+                timeout=context.timeout,
             )
         except InvocationError:
             raise
