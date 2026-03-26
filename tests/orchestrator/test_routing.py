@@ -1,5 +1,6 @@
 """Tests for CEO routing workflow."""
 
+import pytest
 from unittest.mock import MagicMock
 
 from devteam.orchestrator.routing import (
@@ -170,3 +171,19 @@ class TestRouteIntake:
 
         call_kwargs = invoker.invoke.call_args.kwargs
         assert call_kwargs["role"] == "ceo"
+
+
+class TestRouteIntakeInvokerFailure:
+    def test_invoker_exception_wraps_as_runtime_error(self):
+        invoker = MagicMock()
+        invoker.invoke.side_effect = RuntimeError("Network timeout")
+        ctx = IntakeContext(prompt="test prompt")
+        with pytest.raises(RuntimeError, match="CEO routing invocation failed"):
+            route_intake(ctx, invoker)
+
+    def test_invoker_value_error_wraps(self):
+        invoker = MagicMock()
+        invoker.invoke.side_effect = ValueError("Bad JSON")
+        ctx = IntakeContext(prompt="test prompt")
+        with pytest.raises(RuntimeError, match="CEO routing invocation failed"):
+            route_intake(ctx, invoker)

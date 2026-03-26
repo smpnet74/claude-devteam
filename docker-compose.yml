@@ -6,7 +6,8 @@ services:
       - "8000:8000"
     volumes:
       - surrealdb-data:/data
-    command: start --user root --pass root file:/data/devteam.db
+    user: root
+    command: start --user root --pass root surrealkv:/data/devteam.db
     restart: unless-stopped
 
 volumes:

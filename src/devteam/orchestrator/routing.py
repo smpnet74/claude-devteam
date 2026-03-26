@@ -14,7 +14,12 @@ from devteam.orchestrator.schemas import RoutePath, RoutingResult
 
 
 class InvokerProtocol(Protocol):
-    """Protocol for agent invocation — allows mocking in tests."""
+    """Protocol for agent invocation — allows mocking in tests.
+
+    NOTE: The real AgentInvoker.invoke() is async with a different signature.
+    Phase 3B will provide a thin sync adapter that wraps AgentInvoker to
+    satisfy this protocol when wiring into DBOS durable workflows.
+    """
 
     def invoke(
         self,
@@ -96,9 +101,13 @@ def route_intake(
 
     # CEO analysis needed
     prompt = build_routing_prompt(ctx)
-    result = invoker.invoke(
-        role="ceo",
-        prompt=prompt,
-        json_schema=RoutingResult.model_json_schema(),
-    )
+    try:
+        result = invoker.invoke(
+            role="ceo",
+            prompt=prompt,
+            json_schema=RoutingResult.model_json_schema(),
+        )
+    except Exception as e:
+        # TODO: DBOS step retry will handle transient failures in Phase 3B.
+        raise RuntimeError(f"CEO routing invocation failed: {e}") from e
     return RoutingResult.model_validate(result)

@@ -392,3 +392,19 @@ class TestDecompose:
         result = decompose("spec", "plan", routing, invoker)
 
         assert result.tasks[0].work_type == WorkType.RESEARCH
+
+
+class TestDecomposeInvokerFailure:
+    def test_invoker_exception_wraps_as_runtime_error(self):
+        invoker = MagicMock()
+        invoker.invoke.side_effect = RuntimeError("Agent timeout")
+        routing = RoutingResult(path=RoutePath.FULL_PROJECT, reasoning="test")
+        with pytest.raises(RuntimeError, match="CA decomposition invocation failed"):
+            decompose("spec", "plan", routing, invoker)
+
+    def test_invoker_value_error_wraps(self):
+        invoker = MagicMock()
+        invoker.invoke.side_effect = ValueError("Parse failure")
+        routing = RoutingResult(path=RoutePath.FULL_PROJECT, reasoning="test")
+        with pytest.raises(RuntimeError, match="CA decomposition invocation failed"):
+            decompose("spec", "plan", routing, invoker)

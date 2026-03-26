@@ -162,11 +162,15 @@ def decompose(
     5. Run post-processing validation.
     """
     prompt = build_decomposition_prompt(spec, plan, routing)
-    raw = invoker.invoke(
-        role="chief_architect",
-        prompt=prompt,
-        json_schema=DecompositionResult.model_json_schema(),
-    )
+    try:
+        raw = invoker.invoke(
+            role="chief_architect",
+            prompt=prompt,
+            json_schema=DecompositionResult.model_json_schema(),
+        )
+    except Exception as e:
+        # TODO: DBOS step retry will handle transient failures in Phase 3B.
+        raise RuntimeError(f"CA decomposition invocation failed: {e}") from e
     result = DecompositionResult.model_validate(raw)
 
     # Fill in missing peer assignments from defaults

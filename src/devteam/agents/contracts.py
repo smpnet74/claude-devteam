@@ -37,7 +37,12 @@ class WorkType(str, Enum):
 
 
 class QuestionType(str, Enum):
-    """Category of a question raised during execution."""
+    """Category of a question raised during execution.
+
+    Note: These values differ from the original Plan 3 spec (which used
+    architecture, routing_policy, spec_ambiguity, technical). These are more
+    general-purpose. Task 7 (escalation) routing tables should use these values.
+    """
 
     TECHNICAL = "technical"
     ARCHITECTURAL = "architectural"
@@ -47,7 +52,11 @@ class QuestionType(str, Enum):
 
 
 class EscalationLevel(str, Enum):
-    """Where a question gets escalated to."""
+    """Where a question gets escalated to.
+
+    Note: Uses shortened values (supervisor/leadership/human) rather than the
+    plan's escalated_to_supervisor/escalated_to_leadership/escalated_to_human.
+    """
 
     SUPERVISOR = "supervisor"
     LEADERSHIP = "leadership"
@@ -224,7 +233,13 @@ class DecompositionResult(BaseModel):
 
 
 class QuestionRecord(BaseModel):
-    """A question raised during task execution."""
+    """A question raised during task execution (agent output contract).
+
+    This is the structured output an agent returns when raising a question.
+    Tracking fields (id, task_id, job_id, answer, resolved) live in the
+    Question entity model (devteam.models.entities.Question) — the persistence
+    layer, not the agent output contract.
+    """
 
     question: str = Field(min_length=1, description="The question text")
     question_type: QuestionType = Field(description="Category of the question")
