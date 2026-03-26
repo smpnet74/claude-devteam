@@ -2,11 +2,16 @@
 
 from devteam.agents.contracts import (
     DecompositionResult,
+    EscalationLevel,
     ImplementationResult,
+    QuestionRecord,
+    QuestionType,
     ReviewComment,
     ReviewResult,
+    RoutePath,
     RoutingResult,
     TaskDecomposition,
+    WorkType,
 )
 from devteam.agents.invoker import AgentInvoker, InvocationContext, InvocationError, QueryOptions
 from devteam.agents.registry import AgentDefinition, AgentRegistry
@@ -19,11 +24,16 @@ from devteam.agents.template_manager import (
 __all__ = [
     # Contracts
     "DecompositionResult",
+    "EscalationLevel",
     "ImplementationResult",
+    "QuestionRecord",
+    "QuestionType",
     "ReviewComment",
     "ReviewResult",
+    "RoutePath",
     "RoutingResult",
     "TaskDecomposition",
+    "WorkType",
     # Invoker
     "AgentInvoker",
     "InvocationContext",

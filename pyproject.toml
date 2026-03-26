@@ -24,6 +24,9 @@ requires = ["hatchling"]
 [tool.hatch.build.targets.wheel]
 packages = ["src/devteam"]
 
+[tool.hatch.build]
+include = ["src/devteam/**/*.py", "src/devteam/**/*.md"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"

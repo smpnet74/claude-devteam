@@ -8,9 +8,59 @@ output without prose parsing.
 from __future__ import annotations
 
 import re
+from enum import Enum
 from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator, model_validator
+
+
+# --- Enums ---
+
+
+class RoutePath(str, Enum):
+    """Routing paths for incoming work."""
+
+    FULL_PROJECT = "full_project"
+    RESEARCH = "research"
+    SMALL_FIX = "small_fix"
+    OSS_CONTRIBUTION = "oss_contribution"
+
+
+class WorkType(str, Enum):
+    """Type of work a task represents."""
+
+    CODE = "code"
+    RESEARCH = "research"
+    PLANNING = "planning"
+    ARCHITECTURE = "architecture"
+    DOCUMENTATION = "documentation"
+
+
+class QuestionType(str, Enum):
+    """Category of a question raised during execution.
+
+    Note: These values differ from the original Plan 3 spec (which used
+    architecture, routing_policy, spec_ambiguity, technical). These are more
+    general-purpose. Task 7 (escalation) routing tables should use these values.
+    """
+
+    TECHNICAL = "technical"
+    ARCHITECTURAL = "architectural"
+    PRODUCT = "product"
+    PROCESS = "process"
+    BLOCKED = "blocked"
+
+
+class EscalationLevel(str, Enum):
+    """Where a question gets escalated to.
+
+    Note: Uses shortened values (supervisor/leadership/human) rather than the
+    plan's escalated_to_supervisor/escalated_to_leadership/escalated_to_human.
+    """
+
+    SUPERVISOR = "supervisor"
+    LEADERSHIP = "leadership"
+    HUMAN = "human"
 
 
 class ImplementationResult(BaseModel):
@@ -44,8 +94,9 @@ class ImplementationResult(BaseModel):
 
     @model_validator(mode="after")
     def _question_required_when_blocked(self) -> ImplementationResult:
-        if self.status in ("needs_clarification", "blocked") and self.question is None:
-            raise ValueError(f"'question' is required when status is '{self.status}'")
+        if self.status in ("needs_clarification", "blocked"):
+            if self.question is None or not self.question.strip():
+                raise ValueError(f"'question' is required when status is '{self.status}'")
         return self
 
 
@@ -78,6 +129,11 @@ class ReviewResult(BaseModel):
             raise ValueError("blocked verdict requires at least one comment explaining the blocker")
         return self
 
+    @property
+    def needs_revision(self) -> bool:
+        """Whether this review requires the engineer to revise their work."""
+        return self.verdict in ("needs_revision", "blocked")
+
 
 _TASK_ID_RE = re.compile(r"^T-[1-9]\d*$")
 
@@ -96,6 +152,10 @@ class TaskDecomposition(BaseModel):
     pr_group: str = Field(
         min_length=1,
         description="PR group name — tasks in the same group ship as one PR",
+    )
+    work_type: WorkType = Field(
+        default=WorkType.CODE,
+        description="Type of work this task represents",
     )
 
     @field_validator("id")
@@ -156,6 +216,24 @@ class DecompositionResult(BaseModel):
             for tid in group:
                 if tid not in task_ids:
                     raise ValueError(f"parallel_groups references unknown task {tid}")
+        # Check no task appears in multiple parallel_groups
+        seen_in_groups: set[str] = set()
+        for group in self.parallel_groups:
+            for tid in group:
+                if tid in seen_in_groups:
+                    raise ValueError(f"Task {tid} appears in multiple parallel_groups")
+                seen_in_groups.add(tid)
+        # Check tasks in the same parallel_group don't depend on each other
+        for group in self.parallel_groups:
+            group_set = set(group)
+            for task in self.tasks:
+                if task.id in group_set:
+                    for dep in task.depends_on:
+                        if dep in group_set:
+                            raise ValueError(
+                                f"Tasks {task.id} and {dep} are in the same parallel_group "
+                                f"but {task.id} depends on {dep}"
+                            )
         # Detect dependency cycles via DFS
         visited: set[str] = set()
         in_stack: set[str] = set()
@@ -177,8 +255,43 @@ class DecompositionResult(BaseModel):
         return self
 
 
+class QuestionRecord(BaseModel):
+    """A question raised during task execution (agent output contract).
+
+    This is the structured output an agent returns when raising a question.
+    Tracking fields (id, task_id, job_id, answer, resolved) live in the
+    Question entity model (devteam.models.entities.Question) — the persistence
+    layer, not the agent output contract.
+    """
+
+    question: str = Field(min_length=1, description="The question text")
+    question_type: QuestionType = Field(description="Category of the question")
+    context: str = Field(
+        default="",
+        description="Additional context about why this question arose",
+    )
+    escalation_level: EscalationLevel = Field(
+        default=EscalationLevel.SUPERVISOR,
+        description="Where the question should be escalated",
+    )
+
+
 class RoutingResult(BaseModel):
     """Result envelope for CEO routing decision."""
 
-    path: Literal["full_project", "research", "small_fix", "oss_contribution"]
+    path: RoutePath = Field(description="Which routing path to follow")
     reasoning: str = Field(min_length=1, description="Why this routing path was chosen")
+    target_team: str | None = Field(
+        default=None,
+        description="For small_fix: which team to route to directly",
+    )
+
+    @model_validator(mode="after")
+    def _validate_target_team(self) -> RoutingResult:
+        if self.path == RoutePath.SMALL_FIX:
+            if self.target_team not in ("a", "b"):
+                raise ValueError("target_team must be 'a' or 'b' for small_fix routing")
+        else:
+            if self.target_team is not None:
+                raise ValueError(f"target_team must be None for {self.path.value} routing")
+        return self
