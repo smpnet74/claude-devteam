@@ -4,14 +4,12 @@ import os
 from pathlib import Path
 from unittest.mock import patch
 
-import pytest
 from typer.testing import CliRunner
 
 from devteam.cli.main import app
-from devteam.config.settings import DevteamConfig, load_global_config
-from devteam.daemon.database import DatabaseConfig, init_database
+from devteam.config.settings import load_global_config
+from devteam.daemon.database import init_database
 from devteam.daemon.process import (
-    DaemonState,
     acquire_pid_lock,
     get_daemon_state,
     release_pid_lock,
@@ -40,9 +38,7 @@ class TestFullInitFlow:
         assert db_config.db_path.parent.exists()
 
         # Daemon status works
-        with patch(
-            "devteam.cli.commands.daemon_cmd.get_devteam_home", return_value=devteam_home
-        ):
+        with patch("devteam.cli.commands.daemon_cmd.get_devteam_home", return_value=devteam_home):
             result = runner.invoke(app, ["daemon", "status"])
         assert result.exit_code == 0
         assert "not running" in result.output.lower()

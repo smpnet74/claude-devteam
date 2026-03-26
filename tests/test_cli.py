@@ -3,7 +3,6 @@
 from pathlib import Path
 from unittest.mock import patch
 
-import pytest
 from typer.testing import CliRunner
 
 from devteam.cli.main import app
@@ -59,9 +58,7 @@ class TestDaemonCommands:
     def test_daemon_status_not_running(self, tmp_path: Path) -> None:
         devteam_home = tmp_path / ".devteam"
         devteam_home.mkdir()
-        with patch(
-            "devteam.cli.commands.daemon_cmd.get_devteam_home", return_value=devteam_home
-        ):
+        with patch("devteam.cli.commands.daemon_cmd.get_devteam_home", return_value=devteam_home):
             result = runner.invoke(app, ["daemon", "status"])
         assert result.exit_code == 0
         assert "not running" in result.output.lower()
@@ -69,9 +66,7 @@ class TestDaemonCommands:
     def test_daemon_stop_not_running(self, tmp_path: Path) -> None:
         devteam_home = tmp_path / ".devteam"
         devteam_home.mkdir()
-        with patch(
-            "devteam.cli.commands.daemon_cmd.get_devteam_home", return_value=devteam_home
-        ):
+        with patch("devteam.cli.commands.daemon_cmd.get_devteam_home", return_value=devteam_home):
             result = runner.invoke(app, ["daemon", "stop"])
         assert result.exit_code == 1
 
@@ -105,9 +100,7 @@ class TestJobCommands:
         assert "not yet implemented" in result.output.lower()
 
     def test_start_with_issue(self) -> None:
-        result = runner.invoke(
-            app, ["start", "--issue", "https://github.com/org/repo/issues/42"]
-        )
+        result = runner.invoke(app, ["start", "--issue", "https://github.com/org/repo/issues/42"])
         assert result.exit_code == 0
         assert "not yet implemented" in result.output.lower()
 

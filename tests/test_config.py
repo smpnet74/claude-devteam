@@ -2,17 +2,9 @@
 
 from pathlib import Path
 
-import pytest
 
 from devteam.config.settings import (
-    ApprovalConfig,
-    DaemonConfig,
     DevteamConfig,
-    GeneralConfig,
-    GitConfig,
-    PRConfig,
-    ProjectConfig,
-    RateLimitConfig,
     load_global_config,
     load_project_config,
     merge_configs,
@@ -113,9 +105,7 @@ merge_strategy = "squash"
 
 
 class TestMergeConfigs:
-    def test_project_overrides_global(
-        self, tmp_devteam_home: Path, tmp_project_dir: Path
-    ) -> None:
+    def test_project_overrides_global(self, tmp_devteam_home: Path, tmp_project_dir: Path) -> None:
         global_path = tmp_devteam_home / "config.toml"
         global_path.write_text(
             """\

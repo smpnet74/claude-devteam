@@ -9,8 +9,6 @@ from httpx import ASGITransport
 
 from devteam.daemon.process import (
     DaemonAlreadyRunningError,
-    DaemonNotRunningError,
-    DaemonState,
     acquire_pid_lock,
     get_daemon_state,
     read_pid_file,

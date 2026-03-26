@@ -18,7 +18,9 @@ def register_job_commands(app: typer.Typer) -> None:
     def start(
         spec: Optional[str] = typer.Option(None, "--spec", help="Path to spec document"),
         plan: Optional[str] = typer.Option(None, "--plan", help="Path to plan document"),
-        prompt: Optional[str] = typer.Option(None, "--prompt", help="Direct prompt for small fixes"),
+        prompt: Optional[str] = typer.Option(
+            None, "--prompt", help="Direct prompt for small fixes"
+        ),
         issue: Optional[str] = typer.Option(None, "--issue", help="GitHub issue URL"),
         priority: str = typer.Option("normal", "--priority", help="Job priority: high/normal/low"),
     ) -> None:
@@ -35,7 +37,9 @@ def register_job_commands(app: typer.Typer) -> None:
 
     @app.command()
     def status(
-        target: Optional[str] = typer.Argument(None, help="Job ID (W-1), task (W-1/T-3), or omit for all"),
+        target: Optional[str] = typer.Argument(
+            None, help="Job ID (W-1), task (W-1/T-3), or omit for all"
+        ),
         questions: bool = typer.Option(False, "--questions", help="Show pending questions"),
     ) -> None:
         """Show status of active jobs and tasks."""

@@ -41,7 +41,7 @@ dev = ["ruff>=0.15,<1", "pyright>=1.1,<2"]
 
 [tool.pixi.workspace]
 channels = ["conda-forge"]
-platforms = ["osx-arm64"]
+platforms = ["osx-arm64", "linux-64"]
 
 [tool.pixi.dependencies]
 python = ">=3.13,<3.14"
@@ -50,9 +50,7 @@ python = ">=3.13,<3.14"
 claude_devteam = { path = ".", editable = true }
 
 [tool.pixi.environments]
-default = { solve-group = "default" }
-test = { features = ["test"], solve-group = "default" }
-dev = { features = ["dev"], solve-group = "default" }
+default = { features = ["test", "dev"], solve-group = "default" }
 
 [tool.pixi.tasks]
 test = { cmd = "pytest tests/ -v", depends-on = [] }

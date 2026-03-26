@@ -1,7 +1,5 @@
 .pixi/
+pixi.lock
 __pycache__/
 *.egg-info/
 .pytest_cache/
-# pixi environments
-.pixi/*
-!.pixi/config.toml

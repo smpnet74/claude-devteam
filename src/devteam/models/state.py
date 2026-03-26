@@ -6,6 +6,8 @@ functions enforce these rules and raise InvalidTransitionError on violations.
 
 from __future__ import annotations
 
+from typing import Any
+
 from devteam.models.entities import JobStatus, PRStatus, QuestionStatus, TaskStatus
 
 
@@ -123,9 +125,9 @@ PR_TRANSITIONS: dict[PRStatus, set[PRStatus]] = {
 
 def _validate_transition(
     entity_type: str,
-    transitions: dict,
-    from_state: str,
-    to_state: str,
+    transitions: Any,
+    from_state: Any,
+    to_state: Any,
 ) -> None:
     """Generic transition validator."""
     valid_targets = transitions.get(from_state, set())
@@ -143,9 +145,7 @@ def validate_task_transition(from_state: TaskStatus, to_state: TaskStatus) -> No
     _validate_transition("Task", TASK_TRANSITIONS, from_state, to_state)
 
 
-def validate_question_transition(
-    from_state: QuestionStatus, to_state: QuestionStatus
-) -> None:
+def validate_question_transition(from_state: QuestionStatus, to_state: QuestionStatus) -> None:
     """Validate a Question state transition."""
     _validate_transition("Question", QUESTION_TRANSITIONS, from_state, to_state)
 
