@@ -15,8 +15,14 @@ def get_bundled_templates_dir() -> Path:
 
     These are shipped with the devteam package under
     src/devteam/templates/agents/.
+
+    Raises:
+        FileNotFoundError: If the templates directory does not exist.
     """
-    return Path(__file__).parent.parent / "templates" / "agents"
+    templates_dir = Path(__file__).parent.parent / "templates" / "agents"
+    if not templates_dir.is_dir():
+        raise FileNotFoundError(f"Bundled agent templates not found at {templates_dir}")
+    return templates_dir
 
 
 def copy_agent_templates(
@@ -37,8 +43,12 @@ def copy_agent_templates(
     dest_dir = Path(dest_dir)
     dest_dir.mkdir(parents=True, exist_ok=True)
 
+    md_files = list(source_dir.glob("*.md"))
+    if not md_files:
+        raise FileNotFoundError(f"No agent template files found in {source_dir}")
+
     copied: list[Path] = []
-    for src_file in sorted(source_dir.glob("*.md")):
+    for src_file in sorted(md_files):
         if src_file.is_symlink():
             continue
         dest_file = dest_dir / src_file.name
@@ -79,8 +89,12 @@ def copy_agents_to_project(
     dest_dir = project_dir / ".claude" / "agents"
     dest_dir.mkdir(parents=True, exist_ok=True)
 
+    md_files = list(global_agents_dir.glob("*.md"))
+    if not md_files:
+        raise FileNotFoundError(f"No agent template files found in {global_agents_dir}")
+
     copied: list[Path] = []
-    for src_file in sorted(global_agents_dir.glob("*.md")):
+    for src_file in sorted(md_files):
         if src_file.is_symlink():
             continue
         dest_file = dest_dir / src_file.name

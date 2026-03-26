@@ -1,4 +1,4 @@
-"""Tests for agent registry — parses .md frontmatter, builds tool/model registry."""
+"""Tests for agent registry -- parses .md frontmatter, builds tool/model registry."""
 
 from pathlib import Path
 
@@ -79,6 +79,37 @@ tools:
 Invalid model tier.
 """
 
+NON_STRING_TOOL_MD = """\
+---
+model: sonnet
+tools:
+  - Read
+  - 123
+---
+
+Agent with a non-string tool entry.
+"""
+
+EMPTY_PROMPT_MD = """\
+---
+model: sonnet
+tools:
+  - Read
+---
+
+"""
+
+UNKNOWN_TOOL_MD = """\
+---
+model: sonnet
+tools:
+  - Read
+  - SomeNewTool
+---
+
+Agent with an unknown tool name.
+"""
+
 
 class TestAgentDefinition:
     def test_parse_valid_agent(self):
@@ -116,6 +147,25 @@ class TestAgentDefinition:
     def test_invalid_model_tier_raises(self):
         with pytest.raises(ValueError, match="Unknown model tier"):
             AgentDefinition.from_markdown(INVALID_MODEL_MD, "bad")
+
+    def test_non_string_tool_raises(self):
+        """Non-string tool entries must raise ValueError."""
+        with pytest.raises(ValueError, match="tool entries must be strings"):
+            AgentDefinition.from_markdown(NON_STRING_TOOL_MD, "bad_tools")
+
+    def test_empty_prompt_body_raises(self):
+        """Empty prompt body (whitespace-only after frontmatter) must raise."""
+        with pytest.raises(ValueError, match="empty prompt body"):
+            AgentDefinition.from_markdown(EMPTY_PROMPT_MD, "empty_prompt")
+
+    def test_unknown_tool_warns_not_errors(self, caplog):
+        """Unknown tool names should warn but not raise."""
+        import logging
+
+        with caplog.at_level(logging.WARNING, logger="devteam.agents.registry"):
+            defn = AgentDefinition.from_markdown(UNKNOWN_TOOL_MD, "unknown_tool_agent")
+        assert defn.tools == ("Read", "SomeNewTool")
+        assert "unknown tool 'SomeNewTool'" in caplog.text
 
 
 class TestAgentRegistry:
@@ -180,3 +230,11 @@ class TestAgentRegistry:
     def test_directory_not_found_raises(self, tmp_path):
         with pytest.raises(FileNotFoundError):
             AgentRegistry.load(tmp_path / "nonexistent")
+
+    def test_malformed_frontmatter_missing_model_raises(self, tmp_path):
+        """Valid YAML frontmatter but missing required 'model' field."""
+        agents_dir = tmp_path / "agents"
+        agents_dir.mkdir()
+        (agents_dir / "broken.md").write_text(MISSING_MODEL_MD)
+        with pytest.raises(ValueError, match="model"):
+            AgentRegistry.load(agents_dir)

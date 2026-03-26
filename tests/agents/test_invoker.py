@@ -9,7 +9,7 @@ from devteam.agents.contracts import (
     ReviewResult,
     RoutingResult,
 )
-from devteam.agents.invoker import AgentInvoker, InvocationContext, InvocationError
+from devteam.agents.invoker import AgentInvoker, InvocationContext, InvocationError, QueryOptions
 from devteam.agents.registry import AgentDefinition, AgentRegistry
 
 _MOCK_TARGET = "devteam.agents.invoker._run_query"
@@ -22,7 +22,7 @@ def mock_registry():
         "backend_engineer": AgentDefinition(
             role="backend_engineer",
             model="sonnet",
-            tools=[
+            tools=(
                 "Read",
                 "Edit",
                 "Write",
@@ -32,19 +32,19 @@ def mock_registry():
                 "WebSearch",
                 "WebFetch",
                 "query_knowledge",
-            ],
+            ),
             prompt="You are the Backend Engineer.",
         ),
         "ceo": AgentDefinition(
             role="ceo",
             model="opus",
-            tools=["Read", "Glob", "Grep"],
+            tools=("Read", "Glob", "Grep"),
             prompt="You are the CEO.",
         ),
         "qa_engineer": AgentDefinition(
             role="qa_engineer",
             model="haiku",
-            tools=[
+            tools=(
                 "Read",
                 "Edit",
                 "Write",
@@ -54,7 +54,7 @@ def mock_registry():
                 "WebSearch",
                 "WebFetch",
                 "query_knowledge",
-            ],
+            ),
             prompt="You are the QA Engineer.",
         ),
     }
@@ -84,6 +84,22 @@ class TestInvocationContext:
         assert ctx.project_name == "my-app"
 
 
+class TestQueryOptions:
+    def test_defaults(self):
+        opts = QueryOptions()
+        assert opts.model == ""
+        assert opts.system_prompt == ""
+        assert opts.allowed_tools == []
+        assert opts.permission_mode == "default"
+        assert opts.cwd is None
+        assert opts.output_format is None
+
+    def test_frozen(self):
+        opts = QueryOptions(model="sonnet")
+        with pytest.raises(AttributeError):
+            opts.model = "opus"  # type: ignore[misc]
+
+
 class TestAgentInvoker:
     def test_schema_for_role_engineer(self, invoker):
         schema = invoker.schema_for_role("backend_engineer")
@@ -97,16 +113,26 @@ class TestAgentInvoker:
         schema = invoker.schema_for_role("qa_engineer")
         assert schema == ReviewResult.model_json_schema()
 
+    def test_schema_for_unknown_role_raises(self, invoker):
+        """Unknown roles must fail closed with InvocationError."""
+        with pytest.raises(InvocationError, match="No output schema mapped for role"):
+            invoker.schema_for_role("mystery_agent")
+
     def test_build_query_params_engineer(self, invoker, context):
         params = invoker.build_query_params(
             role="backend_engineer",
             task_prompt="Implement the login endpoint",
             context=context,
         )
+        # Top-level keys
         assert params["prompt"] == "Implement the login endpoint"
-        assert params["model"] == "sonnet"
-        assert params["cwd"] == str(context.worktree_path)
-        assert params["allowed_tools"] == [
+        assert isinstance(params["options"], QueryOptions)
+
+        # Options fields
+        opts = params["options"]
+        assert opts.model == "sonnet"
+        assert opts.system_prompt == "You are the Backend Engineer."
+        assert opts.allowed_tools == [
             "Read",
             "Edit",
             "Write",
@@ -117,8 +143,11 @@ class TestAgentInvoker:
             "WebFetch",
             "query_knowledge",
         ]
-        assert params["permission_mode"] == "bypassPermissions"
-        assert "json_schema" in params
+        assert opts.permission_mode == "default"
+        assert opts.cwd == str(context.worktree_path)
+        assert opts.output_format is not None
+        assert opts.output_format["type"] == "json_schema"
+        assert opts.output_format["schema"] == ImplementationResult.model_json_schema()
 
     def test_build_query_params_ceo(self, invoker, context):
         params = invoker.build_query_params(
@@ -126,8 +155,30 @@ class TestAgentInvoker:
             task_prompt="Route this incoming request",
             context=context,
         )
-        assert params["model"] == "opus"
-        assert params["allowed_tools"] == ["Read", "Glob", "Grep"]
+        opts = params["options"]
+        assert opts.model == "opus"
+        assert opts.system_prompt == "You are the CEO."
+        assert opts.allowed_tools == ["Read", "Glob", "Grep"]
+        assert opts.output_format["schema"] == RoutingResult.model_json_schema()
+
+    def test_build_query_params_qa(self, invoker, context):
+        params = invoker.build_query_params(
+            role="qa_engineer",
+            task_prompt="Review this PR",
+            context=context,
+        )
+        opts = params["options"]
+        assert opts.model == "haiku"
+        assert opts.system_prompt == "You are the QA Engineer."
+        assert opts.output_format["schema"] == ReviewResult.model_json_schema()
+
+    def test_build_query_params_worktree_path(self, invoker, context):
+        params = invoker.build_query_params(
+            role="backend_engineer",
+            task_prompt="test",
+            context=context,
+        )
+        assert params["options"].cwd == str(context.worktree_path)
 
     def test_build_query_params_unknown_role_raises(self, invoker, context):
         with pytest.raises(KeyError):
@@ -139,7 +190,7 @@ class TestAgentInvoker:
 
     @pytest.mark.asyncio
     async def test_invoke_calls_run_query(self, invoker, context):
-        """Test that invoke() calls _run_query with correct params."""
+        """Test that invoke() calls _run_query with correct prompt + options."""
         mock_result = MagicMock()
         mock_result.result = json.dumps(
             {
@@ -161,8 +212,10 @@ class TestAgentInvoker:
             )
             mock_run.assert_called_once()
             call_kwargs = mock_run.call_args[1]
-            assert call_kwargs["model"] == "sonnet"
             assert call_kwargs["prompt"] == "Build auth endpoint"
+            assert isinstance(call_kwargs["options"], QueryOptions)
+            assert call_kwargs["options"].model == "sonnet"
+            assert call_kwargs["options"].system_prompt == "You are the Backend Engineer."
 
     @pytest.mark.asyncio
     async def test_invoke_parses_implementation_result(self, invoker, context):
@@ -215,3 +268,67 @@ class TestAgentInvoker:
                     task_prompt="Build auth endpoint",
                     context=context,
                 )
+
+
+class TestSdkCallShape:
+    """Verify _run_query calls SDK with correct prompt + options structure."""
+
+    @pytest.mark.asyncio
+    async def test_sdk_call_shape(self, invoker, context):
+        """Patch claude_agent_sdk.query directly and verify the call shape."""
+        mock_result_msg = MagicMock()
+        mock_result_msg.result = json.dumps(
+            {
+                "status": "completed",
+                "question": None,
+                "files_changed": [],
+                "tests_added": [],
+                "summary": "Done",
+                "confidence": "high",
+            }
+        )
+
+        # Create an async iterator that yields our mock ResultMessage
+        async def mock_query(prompt, options):
+            # Import locally so we can reference the patched ResultMessage
+            yield mock_result_msg
+
+        with (
+            patch(
+                "devteam.agents.invoker.query",
+                create=True,
+            ) as _,
+            patch(
+                "devteam.agents.invoker._run_query",
+                new_callable=AsyncMock,
+            ) as mock_run,
+        ):
+            mock_run.return_value = mock_result_msg
+            await invoker.invoke(
+                role="backend_engineer",
+                task_prompt="Build the thing",
+                context=context,
+            )
+            # Verify _run_query was called with prompt= and options= kwargs
+            mock_run.assert_called_once()
+            call_kwargs = mock_run.call_args[1]
+            assert "prompt" in call_kwargs
+            assert "options" in call_kwargs
+            assert call_kwargs["prompt"] == "Build the thing"
+            opts = call_kwargs["options"]
+            assert opts.model == "sonnet"
+            assert opts.system_prompt == "You are the Backend Engineer."
+            assert opts.cwd == str(context.worktree_path)
+            assert opts.output_format is not None
+
+
+class TestUnknownRoleFailsClosed:
+    """Unknown roles must raise InvocationError, not silently default."""
+
+    def test_get_schema_for_unknown_role_raises(self, invoker):
+        with pytest.raises(InvocationError, match="No output schema mapped for role"):
+            invoker._get_schema_for_role("totally_unknown_role")
+
+    def test_schema_for_role_unknown_raises(self, invoker):
+        with pytest.raises(InvocationError, match="No output schema mapped for role"):
+            invoker.schema_for_role("totally_unknown_role")

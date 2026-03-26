@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import json
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -40,6 +40,22 @@ class InvocationContext:
     project_name: str
 
 
+@dataclass(frozen=True)
+class QueryOptions:
+    """Mirrors ClaudeAgentOptions from the Claude Agent SDK.
+
+    Defined locally so we can code against the correct API shape and verify
+    it in tests even when the SDK is not installed.
+    """
+
+    model: str = ""
+    system_prompt: str = ""
+    allowed_tools: list[str] = field(default_factory=list)
+    permission_mode: str = "default"
+    cwd: str | None = None
+    output_format: dict[str, Any] | None = None
+
+
 # Mapping from role slug patterns to their output contract.
 # The orchestrator uses this to determine which JSON schema to require.
 _ROLE_SCHEMA_MAP: dict[str, type[BaseModel]] = {
@@ -66,16 +82,21 @@ _ENGINEER_ROLES = {
 }
 
 
-async def _run_query(**params: Any) -> _ResultMessage:
+async def _run_query(prompt: str, options: QueryOptions) -> _ResultMessage:
     """Execute the Claude Agent SDK query and return the final ResultMessage.
 
     The SDK's query() returns an AsyncIterator of messages. We consume the
     stream and return the last ResultMessage.
+
+    Note: QueryOptions is our local mirror of ClaudeAgentOptions. We cast to
+    Any at the SDK boundary so pyright does not complain about structural
+    type mismatches.
     """
     from claude_agent_sdk import ResultMessage, query
 
     result_msg: ResultMessage | None = None
-    async for message in query(**params):
+    sdk_options: Any = options  # Cast local QueryOptions to Any for SDK call
+    async for message in query(prompt=prompt, options=sdk_options):
         if isinstance(message, ResultMessage):
             result_msg = message
 
@@ -96,6 +117,20 @@ class AgentInvoker:
     def __init__(self, registry: AgentRegistry) -> None:
         self._registry = registry
 
+    def _get_schema_for_role(self, role: str) -> type[BaseModel]:
+        """Return the Pydantic model class for a role's output schema.
+
+        Raises:
+            InvocationError: If no schema is mapped for the given role.
+        """
+        if role in _ROLE_SCHEMA_MAP:
+            return _ROLE_SCHEMA_MAP[role]
+        if role in _ENGINEER_ROLES:
+            return ImplementationResult
+        raise InvocationError(
+            f"No output schema mapped for role '{role}'. Add it to _ROLE_SCHEMA_MAP."
+        )
+
     def schema_for_role(self, role: str) -> dict[str, Any]:
         """Return the JSON schema for a role's structured output.
 
@@ -104,19 +139,11 @@ class AgentInvoker:
 
         Returns:
             JSON schema dict suitable for the Agent SDK's output_format parameter.
-        """
-        if role in _ROLE_SCHEMA_MAP:
-            return _ROLE_SCHEMA_MAP[role].model_json_schema()
-        if role in _ENGINEER_ROLES:
-            return ImplementationResult.model_json_schema()
-        # Default to ImplementationResult for unknown roles
-        return ImplementationResult.model_json_schema()
 
-    def _result_type_for_role(self, role: str) -> type[BaseModel]:
-        """Return the Pydantic model class for a role's output."""
-        if role in _ROLE_SCHEMA_MAP:
-            return _ROLE_SCHEMA_MAP[role]
-        return ImplementationResult
+        Raises:
+            InvocationError: If no schema is mapped for the role.
+        """
+        return self._get_schema_for_role(role).model_json_schema()
 
     def build_query_params(
         self,
@@ -132,22 +159,29 @@ class AgentInvoker:
             context: Runtime context (worktree path, project name).
 
         Returns:
-            Dict of keyword arguments for query().
+            Dict with ``prompt`` and ``options`` keys matching the SDK's
+            ``query(prompt=..., options=ClaudeAgentOptions(...))`` signature.
 
         Raises:
             KeyError: If role is not in the registry.
+            InvocationError: If no schema is mapped for the role.
         """
         defn = self._registry.get(role)
+        schema_cls = self._get_schema_for_role(role)
 
-        return {
-            "prompt": task_prompt,
-            "model": defn.model,
-            "agent": role,
-            "cwd": str(context.worktree_path),
-            "allowed_tools": list(defn.tools),
-            "permission_mode": "bypassPermissions",
-            "json_schema": self.schema_for_role(role),
-        }
+        options = QueryOptions(
+            model=defn.model,
+            system_prompt=defn.prompt,
+            allowed_tools=list(defn.tools),
+            permission_mode="default",
+            cwd=str(context.worktree_path),
+            output_format={
+                "type": "json_schema",
+                "schema": schema_cls.model_json_schema(),
+            },
+        )
+
+        return {"prompt": task_prompt, "options": options}
 
     async def invoke(
         self,
@@ -174,19 +208,22 @@ class AgentInvoker:
         logger.info(
             "Invoking agent '%s' (model=%s) for project '%s'",
             role,
-            params["model"],
+            params["options"].model,
             context.project_name,
         )
 
         try:
-            sdk_result = await _run_query(**params)
+            sdk_result = await _run_query(
+                prompt=params["prompt"],
+                options=params["options"],
+            )
         except InvocationError:
             raise
         except Exception as e:
             raise InvocationError(f"Agent '{role}' invocation failed: {e}") from e
 
         # Parse the structured JSON output
-        result_type = self._result_type_for_role(role)
+        result_type = self._get_schema_for_role(role)
         try:
             data = json.loads(sdk_result.result)  # type: ignore[arg-type]
             return result_type.model_validate(data)

@@ -62,6 +62,14 @@ class ReviewResult(BaseModel):
     )
     summary: str = Field(min_length=1, description="Overall review summary")
 
+    @model_validator(mode="after")
+    def validate_comments_for_verdict(self) -> ReviewResult:
+        if self.verdict in ("needs_revision", "approved_with_comments") and not self.comments:
+            raise ValueError(f"verdict '{self.verdict}' requires at least one comment")
+        if self.verdict == "blocked" and not self.comments:
+            raise ValueError("blocked verdict requires at least one comment explaining the blocker")
+        return self
+
 
 _TASK_ID_RE = re.compile(r"^T-[1-9]\d*$")
 
@@ -113,6 +121,28 @@ class DecompositionResult(BaseModel):
         default_factory=list,
         description="Groups of task IDs that can execute simultaneously",
     )
+
+    @model_validator(mode="after")
+    def validate_task_graph(self) -> DecompositionResult:
+        task_ids = {t.id for t in self.tasks}
+        # Check for duplicate IDs
+        if len(task_ids) != len(self.tasks):
+            raise ValueError("Duplicate task IDs in decomposition")
+        # Check depends_on references exist
+        for task in self.tasks:
+            for dep in task.depends_on:
+                if dep not in task_ids:
+                    raise ValueError(f"Task {task.id} depends on unknown task {dep}")
+        # Check peer_assignments reference valid task IDs
+        for tid in self.peer_assignments:
+            if tid not in task_ids:
+                raise ValueError(f"peer_assignments references unknown task {tid}")
+        # Check parallel_groups reference valid task IDs
+        for group in self.parallel_groups:
+            for tid in group:
+                if tid not in task_ids:
+                    raise ValueError(f"parallel_groups references unknown task {tid}")
+        return self
 
 
 class RoutingResult(BaseModel):

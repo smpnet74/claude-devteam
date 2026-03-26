@@ -4,6 +4,7 @@ from devteam.agents import (
     AgentInvoker,
     AgentRegistry,
     InvocationContext,
+    QueryOptions,
     copy_agent_templates,
     get_bundled_templates_dir,
 )
@@ -35,11 +36,15 @@ class TestFullPipeline:
                 task_prompt=f"Test task for {role}",
                 context=context,
             )
-            assert params["model"] in ("opus", "sonnet", "haiku")
-            assert params["permission_mode"] == "bypassPermissions"
-            assert "json_schema" in params
-            assert isinstance(params["allowed_tools"], list)
-            assert len(params["allowed_tools"]) > 0
+            assert "prompt" in params
+            assert isinstance(params["options"], QueryOptions)
+            opts = params["options"]
+            assert opts.model in ("opus", "sonnet", "haiku")
+            assert opts.permission_mode == "default"
+            assert opts.output_format is not None
+            assert isinstance(opts.allowed_tools, list)
+            assert len(opts.allowed_tools) > 0
+            assert opts.system_prompt  # non-empty
 
     def test_ceo_gets_routing_schema(self):
         templates_dir = get_bundled_templates_dir()

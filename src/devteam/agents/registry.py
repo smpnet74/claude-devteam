@@ -7,11 +7,14 @@ used by the invoker.
 
 from __future__ import annotations
 
+import logging
 import re
 from dataclasses import dataclass
 from pathlib import Path
 
 import yaml
+
+logger = logging.getLogger(__name__)
 
 # Regex to extract YAML frontmatter delimited by --- lines
 _FRONTMATTER_RE = re.compile(
@@ -20,6 +23,19 @@ _FRONTMATTER_RE = re.compile(
 )
 
 _VALID_MODELS = {"opus", "sonnet", "haiku"}
+
+_KNOWN_TOOLS = {
+    "Read",
+    "Write",
+    "Edit",
+    "Bash",
+    "Glob",
+    "Grep",
+    "WebSearch",
+    "WebFetch",
+    "mcp",
+    "query_knowledge",
+}
 
 
 @dataclass(frozen=True)
@@ -73,11 +89,25 @@ class AgentDefinition:
         if not isinstance(tools, list):
             raise ValueError(f"Agent '{role}': 'tools' must be a list")
 
+        for t in tools:
+            if not isinstance(t, str):
+                raise ValueError(
+                    f"Agent '{role}': tool entries must be strings, got {type(t).__name__}: {t!r}"
+                )
+
+        for t in tools:
+            if t not in _KNOWN_TOOLS:
+                logger.warning("Agent '%s': unknown tool '%s' (not in known set)", role, t)
+
+        prompt_body = prompt.strip()
+        if not prompt_body:
+            raise ValueError(f"Agent '{role}' has empty prompt body")
+
         return cls(
             role=role,
             model=model,
-            tools=tuple(str(t) for t in tools),
-            prompt=prompt.strip(),
+            tools=tuple(tools),
+            prompt=prompt_body,
         )
 
 

@@ -8,7 +8,7 @@ from devteam.agents.contracts import (
     RoutingResult,
     TaskDecomposition,
 )
-from devteam.agents.invoker import AgentInvoker, InvocationContext, InvocationError
+from devteam.agents.invoker import AgentInvoker, InvocationContext, InvocationError, QueryOptions
 from devteam.agents.registry import AgentDefinition, AgentRegistry
 from devteam.agents.template_manager import (
     copy_agent_templates,
@@ -28,6 +28,7 @@ __all__ = [
     "AgentInvoker",
     "InvocationContext",
     "InvocationError",
+    "QueryOptions",
     # Registry
     "AgentDefinition",
     "AgentRegistry",

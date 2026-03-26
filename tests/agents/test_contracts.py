@@ -43,7 +43,7 @@ class TestImplementationResult:
     def test_blocked_result(self):
         result = ImplementationResult(
             status="blocked",
-            question="Database migration failed — need DBA help",
+            question="Database migration failed -- need DBA help",
             files_changed=[],
             tests_added=[],
             summary="Migration blocked",
@@ -169,6 +169,64 @@ class TestReviewResult:
             )
 
 
+class TestReviewResultVerdictCommentsValidation:
+    """Cross-field: verdicts that imply comments must have them."""
+
+    def test_approved_with_comments_no_comments_raises(self):
+        with pytest.raises(ValueError, match="approved_with_comments.*requires at least one"):
+            ReviewResult(
+                verdict="approved_with_comments",
+                comments=[],
+                summary="Looks good with minor notes",
+            )
+
+    def test_needs_revision_no_comments_raises(self):
+        with pytest.raises(ValueError, match="needs_revision.*requires at least one"):
+            ReviewResult(
+                verdict="needs_revision",
+                comments=[],
+                summary="Issues found",
+            )
+
+    def test_blocked_no_comments_raises(self):
+        with pytest.raises(ValueError, match="blocked.*requires at least one comment"):
+            ReviewResult(
+                verdict="blocked",
+                comments=[],
+                summary="Cannot proceed",
+            )
+
+    def test_approved_with_comments_with_comments_ok(self):
+        result = ReviewResult(
+            verdict="approved_with_comments",
+            comments=[
+                ReviewComment(
+                    file="src/main.py",
+                    line=10,
+                    severity="nitpick",
+                    comment="Minor style issue",
+                ),
+            ],
+            summary="Approved with minor notes",
+        )
+        assert result.verdict == "approved_with_comments"
+
+    def test_blocked_with_comments_ok(self):
+        result = ReviewResult(
+            verdict="blocked",
+            comments=[
+                ReviewComment(
+                    file="src/main.py",
+                    line=1,
+                    severity="error",
+                    comment="Security vulnerability",
+                ),
+            ],
+            summary="Blocked due to security issue",
+        )
+        assert result.verdict == "blocked"
+
+
 class TestDecompositionResult:
     def test_simple_decomposition(self):
         result = DecompositionResult(
@@ -223,6 +281,57 @@ class TestDecompositionResult:
                 depends_on=[],
                 pr_group="test",
             )
+
+
+class TestDecompositionResultGraphValidation:
+    """Cross-field: task graph integrity checks."""
+
+    def _make_task(self, task_id, depends_on=None):
+        return TaskDecomposition(
+            id=task_id,
+            description=f"Task {task_id}",
+            assigned_to="backend_engineer",
+            team="a",
+            depends_on=depends_on or [],
+            pr_group="group-1",
+        )
+
+    def test_duplicate_task_ids_raises(self):
+        t1a = self._make_task("T-1")
+        t1b = self._make_task("T-1")
+        with pytest.raises(ValueError, match="Duplicate task IDs"):
+            DecompositionResult(tasks=[t1a, t1b])
+
+    def test_depends_on_unknown_task_raises(self):
+        t1 = self._make_task("T-1", depends_on=["T-99"])
+        with pytest.raises(ValueError, match="depends on unknown task T-99"):
+            DecompositionResult(tasks=[t1])
+
+    def test_bad_peer_assignments_raises(self):
+        t1 = self._make_task("T-1")
+        with pytest.raises(ValueError, match="peer_assignments references unknown task T-99"):
+            DecompositionResult(
+                tasks=[t1],
+                peer_assignments={"T-99": "qa_engineer"},
+            )
+
+    def test_bad_parallel_groups_raises(self):
+        t1 = self._make_task("T-1")
+        with pytest.raises(ValueError, match="parallel_groups references unknown task T-99"):
+            DecompositionResult(
+                tasks=[t1],
+                parallel_groups=[["T-99"]],
+            )
+
+    def test_valid_graph_passes(self):
+        t1 = self._make_task("T-1")
+        t2 = self._make_task("T-2", depends_on=["T-1"])
+        result = DecompositionResult(
+            tasks=[t1, t2],
+            peer_assignments={"T-1": "qa_engineer"},
+            parallel_groups=[["T-1"], ["T-2"]],
+        )
+        assert len(result.tasks) == 2
 
 
 class TestRoutingResult:
