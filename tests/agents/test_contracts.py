@@ -260,6 +260,119 @@ class TestRoutingResult:
             )
 
 
+class TestTaskDecompositionValidation:
+    def test_valid_task_id(self):
+        task = TaskDecomposition(
+            id="T-1",
+            description="test",
+            assigned_to="backend_engineer",
+            team="a",
+            depends_on=[],
+            pr_group="test",
+        )
+        assert task.id == "T-1"
+
+    def test_multi_digit_task_id(self):
+        task = TaskDecomposition(
+            id="T-42",
+            description="test",
+            assigned_to="backend_engineer",
+            team="a",
+            depends_on=[],
+            pr_group="test",
+        )
+        assert task.id == "T-42"
+
+    def test_invalid_task_id_format_rejected(self):
+        with pytest.raises(ValueError, match="T-<n>"):
+            TaskDecomposition(
+                id="task-1",
+                description="test",
+                assigned_to="backend_engineer",
+                team="a",
+                depends_on=[],
+                pr_group="test",
+            )
+
+    def test_task_id_zero_rejected(self):
+        with pytest.raises(ValueError, match="T-<n>"):
+            TaskDecomposition(
+                id="T-0",
+                description="test",
+                assigned_to="backend_engineer",
+                team="a",
+                depends_on=[],
+                pr_group="test",
+            )
+
+    def test_valid_depends_on(self):
+        task = TaskDecomposition(
+            id="T-2",
+            description="test",
+            assigned_to="backend_engineer",
+            team="a",
+            depends_on=["T-1"],
+            pr_group="test",
+        )
+        assert task.depends_on == ["T-1"]
+
+    def test_invalid_depends_on_rejected(self):
+        with pytest.raises(ValueError, match="depends_on"):
+            TaskDecomposition(
+                id="T-2",
+                description="test",
+                assigned_to="backend_engineer",
+                team="a",
+                depends_on=["bad-id"],
+                pr_group="test",
+            )
+
+
+class TestImplementationResultCrossField:
+    def test_blocked_without_question_rejected(self):
+        with pytest.raises(ValueError, match="question.*required"):
+            ImplementationResult(
+                status="blocked",
+                question=None,
+                files_changed=[],
+                tests_added=[],
+                summary="Blocked on dependency",
+                confidence="low",
+            )
+
+    def test_needs_clarification_without_question_rejected(self):
+        with pytest.raises(ValueError, match="question.*required"):
+            ImplementationResult(
+                status="needs_clarification",
+                question=None,
+                files_changed=[],
+                tests_added=[],
+                summary="Need more info",
+                confidence="low",
+            )
+
+    def test_completed_without_question_ok(self):
+        result = ImplementationResult(
+            status="completed",
+            question=None,
+            files_changed=[],
+            tests_added=[],
+            summary="Done",
+            confidence="high",
+        )
+        assert result.question is None
+
+
+class TestDecompositionResultEmptyTasks:
+    def test_empty_tasks_rejected(self):
+        with pytest.raises(ValueError):
+            DecompositionResult(
+                tasks=[],
+                peer_assignments={},
+                parallel_groups=[],
+            )
+
+
 class TestSchemaForRole:
     """Test the helper that maps roles to their output schema."""
 

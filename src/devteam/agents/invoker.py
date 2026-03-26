@@ -144,7 +144,7 @@ class AgentInvoker:
             "model": defn.model,
             "agent": role,
             "cwd": str(context.worktree_path),
-            "allowed_tools": defn.tools,
+            "allowed_tools": list(defn.tools),
             "permission_mode": "bypassPermissions",
             "json_schema": self.schema_for_role(role),
         }
@@ -190,5 +190,5 @@ class AgentInvoker:
         try:
             data = json.loads(sdk_result.result)  # type: ignore[arg-type]
             return result_type.model_validate(data)
-        except (json.JSONDecodeError, Exception) as e:
+        except (json.JSONDecodeError, ValueError, TypeError) as e:
             raise InvocationError(f"Failed to parse agent '{role}' output: {e}") from e

@@ -39,6 +39,8 @@ def copy_agent_templates(
 
     copied: list[Path] = []
     for src_file in sorted(source_dir.glob("*.md")):
+        if src_file.is_symlink():
+            continue
         dest_file = dest_dir / src_file.name
         if dest_file.exists() and not overwrite:
             continue
@@ -66,6 +68,10 @@ def copy_agents_to_project(
     Raises:
         FileNotFoundError: If project_dir does not exist.
     """
+    global_agents_dir = Path(global_agents_dir)
+    if not global_agents_dir.exists():
+        raise FileNotFoundError(f"Global agents directory not found: {global_agents_dir}")
+
     project_dir = Path(project_dir)
     if not project_dir.is_dir():
         raise FileNotFoundError(f"Project directory not found: {project_dir}")
@@ -74,7 +80,9 @@ def copy_agents_to_project(
     dest_dir.mkdir(parents=True, exist_ok=True)
 
     copied: list[Path] = []
-    for src_file in sorted(Path(global_agents_dir).glob("*.md")):
+    for src_file in sorted(global_agents_dir.glob("*.md")):
+        if src_file.is_symlink():
+            continue
         dest_file = dest_dir / src_file.name
         if dest_file.exists() and not overwrite:
             continue

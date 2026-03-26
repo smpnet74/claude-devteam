@@ -1,15 +1,13 @@
 """Tests that all 16 agent template .md files parse correctly."""
 
-from pathlib import Path
-
 import pytest
 from devteam.agents.registry import AgentRegistry
+from devteam.agents.template_manager import get_bundled_templates_dir
 
-
-TEMPLATES_DIR = Path(__file__).parent.parent.parent / "src" / "devteam" / "templates" / "agents"
+TEMPLATES_DIR = get_bundled_templates_dir()
 
 EXPECTED_AGENTS = {
-    "ceo": ("opus", ["Read", "Glob", "Grep"]),
+    "ceo": ("opus", ("Read", "Glob", "Grep")),
     "chief_architect": ("opus", 9),
     "planner_researcher_a": ("sonnet", 9),
     "planner_researcher_b": ("sonnet", 9),
@@ -49,7 +47,7 @@ class TestAgentTemplates:
         assert defn.model == expected_model, (
             f"{role}: expected model {expected_model}, got {defn.model}"
         )
-        if isinstance(expected_tools, list):
+        if isinstance(expected_tools, tuple):
             assert defn.tools == expected_tools, f"{role}: tools mismatch"
         else:
             assert len(defn.tools) == expected_tools, (

@@ -19,6 +19,8 @@ _FRONTMATTER_RE = re.compile(
     re.DOTALL,
 )
 
+_VALID_MODELS = {"opus", "sonnet", "haiku"}
+
 
 @dataclass(frozen=True)
 class AgentDefinition:
@@ -26,7 +28,7 @@ class AgentDefinition:
 
     role: str
     model: str
-    tools: list[str]
+    tools: tuple[str, ...]
     prompt: str
 
     @classmethod
@@ -62,7 +64,10 @@ class AgentDefinition:
         if "model" not in frontmatter:
             raise ValueError(f"Agent '{role}': frontmatter must include 'model' field")
 
-        model = frontmatter["model"]
+        model = str(frontmatter["model"])
+        if model not in _VALID_MODELS:
+            raise ValueError(f"Unknown model tier '{model}' in agent '{role}'")
+
         tools = frontmatter.get("tools", [])
 
         if not isinstance(tools, list):
@@ -70,8 +75,8 @@ class AgentDefinition:
 
         return cls(
             role=role,
-            model=str(model),
-            tools=[str(t) for t in tools],
+            model=model,
+            tools=tuple(str(t) for t in tools),
             prompt=prompt.strip(),
         )
 
@@ -128,8 +133,8 @@ class AgentRegistry:
             raise KeyError(f"Unknown agent role: '{role}'")
         return self._agents[role]
 
-    def get_tools(self, role: str) -> list[str]:
-        """Get the tool list for a role."""
+    def get_tools(self, role: str) -> tuple[str, ...]:
+        """Get the tool tuple for a role."""
         return self.get(role).tools
 
     def get_model(self, role: str) -> str:

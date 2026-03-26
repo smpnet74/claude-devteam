@@ -69,6 +69,16 @@ tools:
 Missing the model field.
 """
 
+INVALID_MODEL_MD = """\
+---
+model: gpt4
+tools:
+  - Read
+---
+
+Invalid model tier.
+"""
+
 
 class TestAgentDefinition:
     def test_parse_valid_agent(self):
@@ -85,7 +95,7 @@ class TestAgentDefinition:
         defn = AgentDefinition.from_markdown(CEO_AGENT_MD, "ceo")
         assert defn.role == "ceo"
         assert defn.model == "opus"
-        assert defn.tools == ["Read", "Glob", "Grep"]
+        assert defn.tools == ("Read", "Glob", "Grep")
         assert "Bash" not in defn.tools
         assert "You are the CEO" in defn.prompt
 
@@ -102,6 +112,10 @@ class TestAgentDefinition:
     def test_missing_model_raises(self):
         with pytest.raises(ValueError, match="model"):
             AgentDefinition.from_markdown(MISSING_MODEL_MD, "bad")
+
+    def test_invalid_model_tier_raises(self):
+        with pytest.raises(ValueError, match="Unknown model tier"):
+            AgentDefinition.from_markdown(INVALID_MODEL_MD, "bad")
 
 
 class TestAgentRegistry:
@@ -136,7 +150,7 @@ class TestAgentRegistry:
         agents_dir = self._create_agents_dir(tmp_path)
         registry = AgentRegistry.load(agents_dir)
         tools = registry.get_tools("ceo")
-        assert tools == ["Read", "Glob", "Grep"]
+        assert tools == ("Read", "Glob", "Grep")
 
     def test_get_model(self, tmp_path):
         agents_dir = self._create_agents_dir(tmp_path)
