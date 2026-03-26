@@ -3,7 +3,9 @@
 import os
 from pathlib import Path
 
+import httpx
 import pytest
+from httpx import ASGITransport
 
 from devteam.daemon.process import (
     DaemonAlreadyRunningError,
@@ -90,3 +92,100 @@ class TestDaemonState:
         state = get_daemon_state(pid_path, port_path)
         assert state.running is False
         assert state.stale is True
+
+
+class TestDaemonServer:
+    @pytest.fixture
+    def app(self):
+        from devteam.daemon.server import create_app
+
+        return create_app()
+
+    @pytest.fixture
+    def client(self, app) -> httpx.AsyncClient:
+        transport = ASGITransport(app=app)
+        return httpx.AsyncClient(transport=transport, base_url="http://test")
+
+    @pytest.mark.asyncio
+    async def test_health_check(self, client: httpx.AsyncClient) -> None:
+        async with client:
+            resp = await client.get("/health")
+            assert resp.status_code == 200
+            data = resp.json()
+            assert data["status"] == "ok"
+            assert "version" in data
+
+    @pytest.mark.asyncio
+    async def test_status_endpoint(self, client: httpx.AsyncClient) -> None:
+        async with client:
+            resp = await client.get("/api/v1/status")
+            assert resp.status_code == 200
+            data = resp.json()
+            assert "jobs" in data
+
+    @pytest.mark.asyncio
+    async def test_start_job_stub(self, client: httpx.AsyncClient) -> None:
+        async with client:
+            resp = await client.post(
+                "/api/v1/jobs",
+                json={"title": "Test Job", "spec_path": "/tmp/spec.md"},
+            )
+            assert resp.status_code == 501
+            assert "not yet implemented" in resp.json()["detail"].lower()
+
+    @pytest.mark.asyncio
+    async def test_stop_job_stub(self, client: httpx.AsyncClient) -> None:
+        async with client:
+            resp = await client.post("/api/v1/jobs/W-1/stop")
+            assert resp.status_code == 501
+
+    @pytest.mark.asyncio
+    async def test_pause_job_stub(self, client: httpx.AsyncClient) -> None:
+        async with client:
+            resp = await client.post("/api/v1/jobs/W-1/pause")
+            assert resp.status_code == 501
+
+    @pytest.mark.asyncio
+    async def test_resume_job_stub(self, client: httpx.AsyncClient) -> None:
+        async with client:
+            resp = await client.post("/api/v1/jobs/W-1/resume")
+            assert resp.status_code == 501
+
+    @pytest.mark.asyncio
+    async def test_cancel_job_stub(self, client: httpx.AsyncClient) -> None:
+        async with client:
+            resp = await client.post("/api/v1/jobs/W-1/cancel")
+            assert resp.status_code == 501
+
+    @pytest.mark.asyncio
+    async def test_answer_question_stub(self, client: httpx.AsyncClient) -> None:
+        async with client:
+            resp = await client.post(
+                "/api/v1/jobs/W-1/questions/Q-1/answer",
+                json={"answer": "Use JWT"},
+            )
+            assert resp.status_code == 501
+
+    @pytest.mark.asyncio
+    async def test_focus_stub(self, client: httpx.AsyncClient) -> None:
+        async with client:
+            resp = await client.post(
+                "/api/v1/focus",
+                json={"job_id": "W-1", "shell_pid": 12345},
+            )
+            assert resp.status_code == 501
+
+    @pytest.mark.asyncio
+    async def test_project_add_stub(self, client: httpx.AsyncClient) -> None:
+        async with client:
+            resp = await client.post(
+                "/api/v1/projects",
+                json={"path": "/path/to/repo"},
+            )
+            assert resp.status_code == 501
+
+    @pytest.mark.asyncio
+    async def test_project_remove_stub(self, client: httpx.AsyncClient) -> None:
+        async with client:
+            resp = await client.delete("/api/v1/projects/myapp")
+            assert resp.status_code == 501
