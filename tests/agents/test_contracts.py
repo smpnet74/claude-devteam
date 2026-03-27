@@ -5,6 +5,7 @@ import json
 import pytest
 from devteam.agents.contracts import (
     DecompositionResult,
+    EscalationAttemptResult,
     EscalationLevel,
     ImplementationResult,
     QuestionRecord,
@@ -873,3 +874,73 @@ class TestParallelGroupSemanticValidation:
             parallel_groups=[["T-1", "T-2"]],
         )
         assert len(result.parallel_groups) == 1
+
+
+class TestEscalationAttemptResult:
+    """Tests for the EscalationAttemptResult structured output contract."""
+
+    def test_resolved_with_answer(self):
+        result = EscalationAttemptResult(
+            resolved=True,
+            answer="Use Redis",
+            reasoning="Matches existing stack",
+        )
+        assert result.resolved
+        assert result.answer == "Use Redis"
+
+    def test_unresolved_no_answer(self):
+        result = EscalationAttemptResult(
+            resolved=False,
+            reasoning="Need more context from product team",
+        )
+        assert not result.resolved
+        assert result.answer is None
+
+    def test_empty_reasoning_rejected(self):
+        with pytest.raises(ValueError):
+            EscalationAttemptResult(
+                resolved=True,
+                answer="Use Redis",
+                reasoning="",
+            )
+
+    def test_missing_reasoning_rejected(self):
+        with pytest.raises(ValueError):
+            EscalationAttemptResult(resolved=True, answer="Use Redis")
+
+    def test_json_schema_generation(self):
+        schema = EscalationAttemptResult.model_json_schema()
+        assert "properties" in schema
+        assert "resolved" in schema["properties"]
+        assert "answer" in schema["properties"]
+        assert "reasoning" in schema["properties"]
+
+    def test_model_validate_from_dict(self):
+        data = {
+            "resolved": True,
+            "answer": "Use Postgres",
+            "reasoning": "Better for our needs",
+        }
+        result = EscalationAttemptResult.model_validate(data)
+        assert result.resolved
+        assert result.answer == "Use Postgres"
+
+    def test_resolved_true_answer_none_raises(self):
+        with pytest.raises(ValueError, match="answer is required when resolved=True"):
+            EscalationAttemptResult(resolved=True, answer=None, reasoning="some reasoning")
+
+    def test_resolved_true_answer_empty_raises(self):
+        with pytest.raises(ValueError, match="answer is required when resolved=True"):
+            EscalationAttemptResult(resolved=True, answer="", reasoning="some reasoning")
+
+    def test_resolved_true_answer_present_succeeds(self):
+        result = EscalationAttemptResult(
+            resolved=True, answer="use JWT", reasoning="some reasoning"
+        )
+        assert result.resolved
+        assert result.answer == "use JWT"
+
+    def test_resolved_false_answer_none_succeeds(self):
+        result = EscalationAttemptResult(resolved=False, answer=None, reasoning="some reasoning")
+        assert not result.resolved
+        assert result.answer is None

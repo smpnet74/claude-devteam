@@ -2,6 +2,7 @@
 
 from devteam.agents.contracts import (
     DecompositionResult,
+    EscalationAttemptResult,
     EscalationLevel,
     ImplementationResult,
     QuestionRecord,
@@ -16,6 +17,7 @@ from devteam.agents.contracts import (
 
 __all__ = [
     "DecompositionResult",
+    "EscalationAttemptResult",
     "EscalationLevel",
     "ImplementationResult",
     "QuestionRecord",

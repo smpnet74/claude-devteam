@@ -1,0 +1,16 @@
+# TruffleHog configuration for CodeRabbit secret scanning.
+# CodeRabbit requires this file in the repo root to activate TruffleHog scans on PRs.
+# Built-in 700+ credential detectors are active by default.
+# Docs: https://docs.trufflesecurity.com/configuration-file-reference
+
+detectors:
+  # Use all built-in detectors at default sensitivity
+  - name: all
+
+# Custom detectors for project-specific secrets
+# Uncomment and adapt as needed:
+# - name: custom-devteam-tokens
+#   keywords:
+#     - "devteam_"
+#   regex:
+#     pattern: "devteam_[a-zA-Z0-9]{32,}"
