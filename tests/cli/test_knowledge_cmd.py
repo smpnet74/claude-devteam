@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from typer.testing import CliRunner
 
@@ -53,10 +53,15 @@ def _make_mock_store():
     return store
 
 
+def _make_mock_embedder():
+    """Create a mock OllamaEmbedder for CLI tests."""
+    return MagicMock()
+
+
 class TestKnowledgeStats:
     def test_stats_displays_output(self):
         mock_store = _make_mock_store()
-        with patch("devteam.cli.commands.knowledge_cmd.get_store", return_value=mock_store):
+        with patch("devteam.cli.commands.knowledge_cmd.get_store", return_value=(mock_store, _make_mock_embedder())):
             result = runner.invoke(knowledge_app, ["stats"])
             assert result.exit_code == 0
             assert "Knowledge Base Statistics" in result.output
@@ -67,14 +72,14 @@ class TestKnowledgeStats:
 
     def test_stats_shows_sharing_breakdown(self):
         mock_store = _make_mock_store()
-        with patch("devteam.cli.commands.knowledge_cmd.get_store", return_value=mock_store):
+        with patch("devteam.cli.commands.knowledge_cmd.get_store", return_value=(mock_store, _make_mock_embedder())):
             result = runner.invoke(knowledge_app, ["stats"])
             assert "shared: 3" in result.output
             assert "project: 2" in result.output
 
     def test_stats_shows_project_breakdown(self):
         mock_store = _make_mock_store()
-        with patch("devteam.cli.commands.knowledge_cmd.get_store", return_value=mock_store):
+        with patch("devteam.cli.commands.knowledge_cmd.get_store", return_value=(mock_store, _make_mock_embedder())):
             result = runner.invoke(knowledge_app, ["stats"])
             assert "myapp: 2" in result.output
 
@@ -91,7 +96,7 @@ class TestKnowledgeStats:
 class TestKnowledgeVerify:
     def test_verify_entry(self):
         mock_store = _make_mock_store()
-        with patch("devteam.cli.commands.knowledge_cmd.get_store", return_value=mock_store):
+        with patch("devteam.cli.commands.knowledge_cmd.get_store", return_value=(mock_store, _make_mock_embedder())):
             result = runner.invoke(knowledge_app, ["verify", "knowledge:abc"])
             assert result.exit_code == 0
             assert "verified" in result.output.lower()
@@ -109,7 +114,7 @@ class TestKnowledgeVerify:
 class TestKnowledgeRedact:
     def test_redact_entry(self):
         mock_store = _make_mock_store()
-        with patch("devteam.cli.commands.knowledge_cmd.get_store", return_value=mock_store):
+        with patch("devteam.cli.commands.knowledge_cmd.get_store", return_value=(mock_store, _make_mock_embedder())):
             result = runner.invoke(knowledge_app, ["redact", "knowledge:abc"])
             assert result.exit_code == 0
             assert "Redacted" in result.output
@@ -118,7 +123,7 @@ class TestKnowledgeRedact:
     def test_redact_nonexistent_entry(self):
         mock_store = _make_mock_store()
         mock_store.get_entry.return_value = None
-        with patch("devteam.cli.commands.knowledge_cmd.get_store", return_value=mock_store):
+        with patch("devteam.cli.commands.knowledge_cmd.get_store", return_value=(mock_store, _make_mock_embedder())):
             result = runner.invoke(knowledge_app, ["redact", "knowledge:missing"])
             assert result.exit_code == 1
             assert "not found" in result.output.lower()
@@ -127,7 +132,7 @@ class TestKnowledgeRedact:
 class TestKnowledgePurge:
     def test_purge_by_id(self):
         mock_store = _make_mock_store()
-        with patch("devteam.cli.commands.knowledge_cmd.get_store", return_value=mock_store):
+        with patch("devteam.cli.commands.knowledge_cmd.get_store", return_value=(mock_store, _make_mock_embedder())):
             result = runner.invoke(knowledge_app, ["purge", "knowledge:abc"])
             assert result.exit_code == 0
             assert "Purged entry" in result.output
@@ -135,7 +140,7 @@ class TestKnowledgePurge:
     def test_purge_by_project(self):
         mock_store = _make_mock_store()
         mock_store.delete_by_project.return_value = 3
-        with patch("devteam.cli.commands.knowledge_cmd.get_store", return_value=mock_store):
+        with patch("devteam.cli.commands.knowledge_cmd.get_store", return_value=(mock_store, _make_mock_embedder())):
             result = runner.invoke(knowledge_app, ["purge", "--project", "myapp"])
             assert result.exit_code == 0
             assert "3" in result.output
@@ -146,7 +151,7 @@ class TestKnowledgePurge:
             {"id": "knowledge:old1"},
             {"id": "knowledge:old2"},
         ]
-        with patch("devteam.cli.commands.knowledge_cmd.get_store", return_value=mock_store):
+        with patch("devteam.cli.commands.knowledge_cmd.get_store", return_value=(mock_store, _make_mock_embedder())):
             result = runner.invoke(knowledge_app, ["purge", "--older-than", "30"])
             assert result.exit_code == 0
             assert "2" in result.output
@@ -155,14 +160,14 @@ class TestKnowledgePurge:
     def test_purge_older_than_no_matches(self):
         mock_store = _make_mock_store()
         mock_store.get_decay_candidates.return_value = []
-        with patch("devteam.cli.commands.knowledge_cmd.get_store", return_value=mock_store):
+        with patch("devteam.cli.commands.knowledge_cmd.get_store", return_value=(mock_store, _make_mock_embedder())):
             result = runner.invoke(knowledge_app, ["purge", "--older-than", "30"])
             assert result.exit_code == 0
             assert "No entries" in result.output
 
     def test_purge_no_args_shows_error(self):
         mock_store = _make_mock_store()
-        with patch("devteam.cli.commands.knowledge_cmd.get_store", return_value=mock_store):
+        with patch("devteam.cli.commands.knowledge_cmd.get_store", return_value=(mock_store, _make_mock_embedder())):
             result = runner.invoke(knowledge_app, ["purge"])
             assert result.exit_code == 1
 
@@ -170,7 +175,7 @@ class TestKnowledgePurge:
 class TestKnowledgeExport:
     def test_export_to_stdout(self):
         mock_store = _make_mock_store()
-        with patch("devteam.cli.commands.knowledge_cmd.get_store", return_value=mock_store):
+        with patch("devteam.cli.commands.knowledge_cmd.get_store", return_value=(mock_store, _make_mock_embedder())):
             result = runner.invoke(knowledge_app, ["export"])
             assert result.exit_code == 0
             data = json.loads(result.output)
@@ -180,7 +185,7 @@ class TestKnowledgeExport:
     def test_export_to_file(self, tmp_path):
         mock_store = _make_mock_store()
         output_file = str(tmp_path / "export.json")
-        with patch("devteam.cli.commands.knowledge_cmd.get_store", return_value=mock_store):
+        with patch("devteam.cli.commands.knowledge_cmd.get_store", return_value=(mock_store, _make_mock_embedder())):
             result = runner.invoke(knowledge_app, ["export", "-o", output_file])
             assert result.exit_code == 0
             assert "Exported" in result.output
@@ -190,7 +195,7 @@ class TestKnowledgeExport:
 
     def test_export_strips_embeddings(self):
         mock_store = _make_mock_store()
-        with patch("devteam.cli.commands.knowledge_cmd.get_store", return_value=mock_store):
+        with patch("devteam.cli.commands.knowledge_cmd.get_store", return_value=(mock_store, _make_mock_embedder())):
             result = runner.invoke(knowledge_app, ["export"])
             assert result.exit_code == 0
             data = json.loads(result.output)
@@ -201,12 +206,12 @@ class TestKnowledgeExport:
 class TestKnowledgeSearch:
     def test_search_delegates_to_query_tool(self):
         mock_store = _make_mock_store()
+        mock_embedder = _make_mock_embedder()
         mock_tool = AsyncMock()
         mock_tool.query.return_value = "Knowledge results for: test\n\n### 1. Test"
 
         with (
-            patch("devteam.cli.commands.knowledge_cmd.get_store", return_value=mock_store),
-            patch("devteam.knowledge.embeddings.OllamaEmbedder", autospec=True),
+            patch("devteam.cli.commands.knowledge_cmd.get_store", return_value=(mock_store, mock_embedder)),
             patch(
                 "devteam.knowledge.query_tool.QueryKnowledgeTool",
                 return_value=mock_tool,
@@ -215,6 +220,23 @@ class TestKnowledgeSearch:
             result = runner.invoke(knowledge_app, ["search", "test query"])
             assert result.exit_code == 0
             assert "Knowledge results" in result.output
+
+    def test_search_passes_limit(self):
+        mock_store = _make_mock_store()
+        mock_embedder = _make_mock_embedder()
+        mock_tool = AsyncMock()
+        mock_tool.query.return_value = "Knowledge results for: test\n\n### 1. Test"
+
+        with (
+            patch("devteam.cli.commands.knowledge_cmd.get_store", return_value=(mock_store, mock_embedder)),
+            patch(
+                "devteam.knowledge.query_tool.QueryKnowledgeTool",
+                return_value=mock_tool,
+            ),
+        ):
+            result = runner.invoke(knowledge_app, ["search", "test query", "--limit", "10"])
+            assert result.exit_code == 0
+            mock_tool.query.assert_awaited_once_with("test query", scope="all", limit=10)
 
     def test_search_handles_store_unavailable(self):
         with patch(

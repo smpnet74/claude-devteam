@@ -52,12 +52,13 @@ class QueryKnowledgeTool:
         self.current_project = current_project
         self.agent_role = agent_role
 
-    async def query(self, query: str, scope: str = "all") -> str:
+    async def query(self, query: str, scope: str = "all", limit: int = 5) -> str:
         """Search the team knowledge base.
 
         Args:
             query: What you're looking for (natural language).
             scope: "shared", "my_role", "project", or "all".
+            limit: Maximum number of results to return.
 
         Returns:
             Formatted string of relevant knowledge entries.
@@ -88,7 +89,7 @@ class QueryKnowledgeTool:
         try:
             results = await self.store.vector_search(
                 embedding=embedding,
-                limit=5,
+                limit=limit,
                 sharing=sharing,
                 project=project,
                 tags=tags,

@@ -14,6 +14,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+from pathlib import Path
 from typing import Any
 
 import typer
@@ -32,17 +33,26 @@ knowledge_app = typer.Typer(
 # ---------------------------------------------------------------------------
 
 _store: Any = None  # KnowledgeStore | None
+_embedder: Any = None  # OllamaEmbedder | None
 
 
-def get_store() -> Any:
-    """Get the KnowledgeStore instance. Overridden in tests."""
+def get_store() -> tuple[Any, Any]:
+    """Get the KnowledgeStore and embedder instances, configured from global config."""
+    from devteam.config.settings import load_global_config
+    from devteam.knowledge.embeddings import create_embedder_from_config
     from devteam.knowledge.store import KnowledgeStore
 
-    global _store
+    global _store, _embedder
     if _store is None:
-        _store = KnowledgeStore("ws://localhost:8000")
-        _run(_store.connect())
-    return _store
+        config_path = Path.home() / ".devteam" / "config.toml"
+        config = load_global_config(config_path)
+        _store = KnowledgeStore(config.knowledge.surrealdb_url)
+        _run(_store.connect(
+            username=config.knowledge.surrealdb_username,
+            password=config.knowledge.surrealdb_password,
+        ))
+        _embedder = create_embedder_from_config(config.knowledge)
+    return _store, _embedder
 
 
 def _run(coro: Any) -> Any:
@@ -63,23 +73,21 @@ def search(
     limit: int = typer.Option(5, help="Max results"),
 ) -> None:
     """Semantic search of the knowledge base."""
-    from devteam.knowledge.embeddings import OllamaEmbedder
     from devteam.knowledge.query_tool import QueryKnowledgeTool
 
     try:
-        store = get_store()
+        store, embedder = get_store()
     except Exception as e:
         typer.echo(f"Knowledge store unavailable: {e}", err=True)
         raise typer.Exit(1)
 
-    embedder = OllamaEmbedder()
     tool = QueryKnowledgeTool(
         store=store,
         embedder=embedder,
         current_project=project or "",
         agent_role="admin",
     )
-    result = _run(tool.query(query, scope=scope))
+    result = _run(tool.query(query, scope=scope, limit=limit))
     typer.echo(result)
 
 
@@ -87,7 +95,7 @@ def search(
 def stats() -> None:
     """Show knowledge base statistics."""
     try:
-        store = get_store()
+        store, _emb = get_store()
     except Exception as e:
         typer.echo(f"Knowledge store unavailable: {e}", err=True)
         raise typer.Exit(1)
@@ -116,7 +124,7 @@ def verify(
 ) -> None:
     """Manually mark a knowledge entry as verified."""
     try:
-        store = get_store()
+        store, _emb = get_store()
     except Exception as e:
         typer.echo(f"Knowledge store unavailable: {e}", err=True)
         raise typer.Exit(1)
@@ -131,7 +139,7 @@ def redact(
 ) -> None:
     """Remove sensitive content from an entry, preserving the learning."""
     try:
-        store = get_store()
+        store, _emb = get_store()
     except Exception as e:
         typer.echo(f"Knowledge store unavailable: {e}", err=True)
         raise typer.Exit(1)
@@ -163,7 +171,7 @@ def purge(
 ) -> None:
     """Delete knowledge entries entirely."""
     try:
-        store = get_store()
+        store, _emb = get_store()
     except Exception as e:
         typer.echo(f"Knowledge store unavailable: {e}", err=True)
         raise typer.Exit(1)
@@ -199,7 +207,7 @@ def export_knowledge(
 ) -> None:
     """Export knowledge base to JSON."""
     try:
-        store = get_store()
+        store, _emb = get_store()
     except Exception as e:
         typer.echo(f"Knowledge store unavailable: {e}", err=True)
         raise typer.Exit(1)
