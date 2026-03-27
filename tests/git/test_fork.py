@@ -25,19 +25,17 @@ class TestCheckPushAccess:
     def test_has_push_access(self) -> None:
         """Returns True when user has push permissions."""
         with patch("devteam.git.fork.gh_run") as mock_gh:
-            # gh --jq .permissions extracts the permissions object
-            mock_gh.return_value = {"push": True}
+            mock_gh.return_value = {"permissions": {"push": True}}
             assert check_push_access("org/repo") is True
             mock_gh.assert_called_once_with(
-                ["api", "repos/org/repo", "--jq", ".permissions"],
+                ["api", "repos/org/repo"],
                 parse_json=True,
             )
 
     def test_no_push_access(self) -> None:
         """Returns False when user lacks push permissions."""
         with patch("devteam.git.fork.gh_run") as mock_gh:
-            # gh --jq .permissions extracts the permissions object
-            mock_gh.return_value = {"push": False}
+            mock_gh.return_value = {"permissions": {"push": False}}
             assert check_push_access("org/repo") is False
 
     def test_api_error_returns_false(self) -> None:
@@ -252,3 +250,18 @@ class TestParseNwoFromUrl:
     def test_invalid_url_raises(self) -> None:
         with pytest.raises(ValueError, match="Cannot parse"):
             _parse_nwo_from_url("not-a-url")
+
+    def test_gitlab_ssh_raises(self) -> None:
+        """Non-GitHub SSH URLs are rejected."""
+        with pytest.raises(ValueError, match="Cannot parse"):
+            _parse_nwo_from_url("git@gitlab.com:org/repo.git")
+
+    def test_gitlab_https_raises(self) -> None:
+        """Non-GitHub HTTPS URLs are rejected."""
+        with pytest.raises(ValueError, match="Cannot parse"):
+            _parse_nwo_from_url("https://gitlab.com/org/repo.git")
+
+    def test_notgithub_https_raises(self) -> None:
+        """URLs with 'github.com' as substring of another host are rejected."""
+        with pytest.raises(ValueError, match="Cannot parse"):
+            _parse_nwo_from_url("https://notgithub.com/org/repo.git")

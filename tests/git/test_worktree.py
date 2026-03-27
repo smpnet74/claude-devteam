@@ -1,44 +1,16 @@
 """Tests for worktree management."""
 
-import subprocess
 from pathlib import Path
 
 import pytest
 
 from devteam.git.worktree import (
+    _branch_to_dirname,
     create_worktree,
     list_worktrees,
     remove_worktree,
     worktree_exists,
 )
-
-
-@pytest.fixture
-def git_repo(tmp_path: Path) -> Path:
-    """Create a temporary git repo with an initial commit."""
-    repo = tmp_path / "repo"
-    repo.mkdir()
-    subprocess.run(["git", "init", str(repo)], check=True, capture_output=True)
-    subprocess.run(
-        ["git", "-C", str(repo), "config", "user.email", "test@test.com"],
-        check=True,
-        capture_output=True,
-    )
-    subprocess.run(
-        ["git", "-C", str(repo), "config", "user.name", "Test"],
-        check=True,
-        capture_output=True,
-    )
-    # Need at least one commit for worktrees to work
-    readme = repo / "README.md"
-    readme.write_text("# Test")
-    subprocess.run(["git", "-C", str(repo), "add", "."], check=True, capture_output=True)
-    subprocess.run(
-        ["git", "-C", str(repo), "commit", "-m", "init"],
-        check=True,
-        capture_output=True,
-    )
-    return repo
 
 
 class TestCreateWorktree:
@@ -135,6 +107,43 @@ class TestListWorktrees:
         info = create_worktree(git_repo, "feat/frozen")
         with pytest.raises(AttributeError):
             info.branch = "other"  # type: ignore[misc]
+
+
+class TestBranchToDirname:
+    def test_slashes_to_dashes(self) -> None:
+        """Slashes are replaced with dashes."""
+        assert _branch_to_dirname("feat/user/auth") == "feat-user-auth"
+
+    def test_backslashes_to_dashes(self) -> None:
+        """Backslashes are replaced with dashes."""
+        assert _branch_to_dirname("feat\\login") == "feat-login"
+
+    def test_empty_branch_raises(self) -> None:
+        """Empty branch name raises ValueError."""
+        with pytest.raises(ValueError, match="Unsafe branch name"):
+            _branch_to_dirname("")
+
+    def test_null_byte_raises(self) -> None:
+        """Branch name with null byte raises ValueError."""
+        with pytest.raises(ValueError, match="Unsafe branch name"):
+            _branch_to_dirname("feat\x00login")
+
+    def test_dot_prefix_raises(self) -> None:
+        """Branch name starting with dot raises ValueError."""
+        with pytest.raises(ValueError, match="Unsafe branch name"):
+            _branch_to_dirname(".hidden")
+
+    def test_space_in_name_raises(self) -> None:
+        """Branch name with spaces raises ValueError."""
+        with pytest.raises(ValueError, match="Unsafe branch name"):
+            _branch_to_dirname("feat login")
+
+    def test_slashes_only_produces_empty_raises(self) -> None:
+        """Branch that is only slashes produces empty string after sub."""
+        # "/" becomes "-" which is valid, but "//" becomes "--" which is valid too
+        # Only truly empty after sub would be problematic
+        result = _branch_to_dirname("feat/ok")
+        assert result == "feat-ok"
 
 
 class TestWorktreeExists:

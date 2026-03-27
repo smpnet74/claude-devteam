@@ -85,10 +85,13 @@ def delete_remote_branch(
         remote: Remote name (default 'origin').
 
     Raises:
-        ValueError: If branch name is empty.
+        ValueError: If branch name is empty or is a protected branch.
     """
     if not branch:
         raise ValueError("branch must not be empty")
+
+    if branch in PROTECTED_BRANCHES:
+        raise ValueError(f"Cannot delete default branch '{branch}'")
 
     try:
         git_run(["push", remote, "--delete", branch], cwd=repo_root)

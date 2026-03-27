@@ -101,7 +101,10 @@ def gh_run(
         raise GhError(args, result.returncode, result.stderr.strip())
     stdout = result.stdout.strip()
     if parse_json:
-        return json.loads(stdout)
+        try:
+            return json.loads(stdout)
+        except json.JSONDecodeError as e:
+            raise GhError(args, 0, f"Failed to parse JSON: {stdout[:200]}") from e
     return stdout
 
 

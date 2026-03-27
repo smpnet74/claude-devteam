@@ -16,33 +16,6 @@ from devteam.git.branch import (
 from devteam.git.helpers import GitError, get_current_branch, get_default_branch
 
 
-@pytest.fixture
-def git_repo(tmp_path: Path) -> Path:
-    """Create a temporary git repo with an initial commit."""
-    repo = tmp_path / "repo"
-    repo.mkdir()
-    subprocess.run(["git", "init", str(repo)], check=True, capture_output=True)
-    subprocess.run(
-        ["git", "-C", str(repo), "config", "user.email", "test@test.com"],
-        check=True,
-        capture_output=True,
-    )
-    subprocess.run(
-        ["git", "-C", str(repo), "config", "user.name", "Test"],
-        check=True,
-        capture_output=True,
-    )
-    readme = repo / "README.md"
-    readme.write_text("# Test")
-    subprocess.run(["git", "-C", str(repo), "add", "."], check=True, capture_output=True)
-    subprocess.run(
-        ["git", "-C", str(repo), "commit", "-m", "init"],
-        check=True,
-        capture_output=True,
-    )
-    return repo
-
-
 class TestCreateFeatureBranch:
     def test_create_branch(self, git_repo: Path) -> None:
         """Creates a local branch from HEAD."""
@@ -149,6 +122,21 @@ class TestDeleteRemoteBranch:
         """Empty branch name raises ValueError."""
         with pytest.raises(ValueError, match="branch must not be empty"):
             delete_remote_branch(git_repo, "")
+
+    def test_refuses_to_delete_remote_main(self, git_repo: Path) -> None:
+        """Cannot delete main on remote."""
+        with pytest.raises(ValueError, match="default branch"):
+            delete_remote_branch(git_repo, "main")
+
+    def test_refuses_to_delete_remote_master(self, git_repo: Path) -> None:
+        """Cannot delete master on remote."""
+        with pytest.raises(ValueError, match="default branch"):
+            delete_remote_branch(git_repo, "master")
+
+    def test_refuses_to_delete_remote_develop(self, git_repo: Path) -> None:
+        """Cannot delete develop on remote."""
+        with pytest.raises(ValueError, match="default branch"):
+            delete_remote_branch(git_repo, "develop")
 
 
 class TestBranchQueries:

@@ -27,8 +27,15 @@ def _branch_to_dirname(branch: str) -> str:
     """Convert a branch name to a safe directory name.
 
     feat/user/auth -> feat-user-auth
+
+    Raises:
+        ValueError: If the resulting name is empty, contains null bytes,
+            starts with a dot, or contains spaces.
     """
-    return re.sub(r"[/\\]", "-", branch)
+    name = re.sub(r"[/\\]", "-", branch)
+    if not name or "\x00" in name or name.startswith(".") or " " in name:
+        raise ValueError(f"Unsafe branch name for directory: {branch!r}")
+    return name
 
 
 def create_worktree(

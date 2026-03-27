@@ -17,36 +17,10 @@ from devteam.git.helpers import (
 )
 
 
-@pytest.fixture
-def tmp_repo(tmp_path: Path) -> Path:
-    """Create a temporary git repo with an initial commit."""
-    repo = tmp_path / "repo"
-    repo.mkdir()
-    subprocess.run(["git", "init", str(repo)], check=True, capture_output=True)
-    subprocess.run(
-        ["git", "-C", str(repo), "config", "user.email", "test@test.com"],
-        check=True,
-        capture_output=True,
-    )
-    subprocess.run(
-        ["git", "-C", str(repo), "config", "user.name", "Test"],
-        check=True,
-        capture_output=True,
-    )
-    (repo / "README.md").write_text("# Test")
-    subprocess.run(["git", "-C", str(repo), "add", "."], check=True, capture_output=True)
-    subprocess.run(
-        ["git", "-C", str(repo), "commit", "-m", "init"],
-        check=True,
-        capture_output=True,
-    )
-    return repo
-
-
 class TestGitRun:
-    def test_success(self, tmp_repo: Path) -> None:
+    def test_success(self, git_repo: Path) -> None:
         """git_run returns stdout on success."""
-        result = git_run(["status"], cwd=tmp_repo)
+        result = git_run(["status"], cwd=git_repo)
         assert "On branch" in result
 
     def test_failure_raises_git_error(self, tmp_path: Path) -> None:
@@ -56,9 +30,9 @@ class TestGitRun:
         with pytest.raises(GitError, match="not a git repository|fatal"):
             git_run(["log"], cwd=empty)
 
-    def test_strips_output(self, tmp_repo: Path) -> None:
+    def test_strips_output(self, git_repo: Path) -> None:
         """git_run strips trailing whitespace/newlines."""
-        result = git_run(["rev-parse", "--git-dir"], cwd=tmp_repo)
+        result = git_run(["rev-parse", "--git-dir"], cwd=git_repo)
         assert result == ".git"
 
     def test_check_false_no_raise(self, tmp_path: Path) -> None:
@@ -157,19 +131,31 @@ class TestGhRun:
             assert err.returncode == 1
             assert "Not Found" in err.stderr
 
+    def test_parse_json_invalid_raises_gh_error(self) -> None:
+        """gh_run with parse_json=True raises GhError on invalid JSON."""
+        with patch("devteam.git.helpers.subprocess.run") as mock_run:
+            mock_run.return_value = subprocess.CompletedProcess(
+                args=["gh", "api", "repos/x/y"],
+                returncode=0,
+                stdout="not valid json at all",
+                stderr="",
+            )
+            with pytest.raises(GhError, match="Failed to parse JSON"):
+                gh_run(["api", "repos/x/y"], parse_json=True)
+
 
 class TestGetRepoRoot:
-    def test_returns_repo_root(self, tmp_repo: Path) -> None:
+    def test_returns_repo_root(self, git_repo: Path) -> None:
         """get_repo_root returns the repo root path."""
-        root = get_repo_root(cwd=tmp_repo)
-        assert root == tmp_repo.resolve()
+        root = get_repo_root(cwd=git_repo)
+        assert root == git_repo.resolve()
 
-    def test_from_subdirectory(self, tmp_repo: Path) -> None:
+    def test_from_subdirectory(self, git_repo: Path) -> None:
         """get_repo_root works from a subdirectory."""
-        subdir = tmp_repo / "src" / "pkg"
+        subdir = git_repo / "src" / "pkg"
         subdir.mkdir(parents=True)
         root = get_repo_root(cwd=subdir)
-        assert root == tmp_repo.resolve()
+        assert root == git_repo.resolve()
 
     def test_not_a_repo_raises(self, tmp_path: Path) -> None:
         """get_repo_root raises GitError outside a repo."""
@@ -180,26 +166,26 @@ class TestGetRepoRoot:
 
 
 class TestGetCurrentBranch:
-    def test_returns_branch_name(self, tmp_repo: Path) -> None:
+    def test_returns_branch_name(self, git_repo: Path) -> None:
         """get_current_branch returns the current branch."""
-        branch = get_current_branch(cwd=tmp_repo)
+        branch = get_current_branch(cwd=git_repo)
         assert branch in ("main", "master")
 
-    def test_after_checkout(self, tmp_repo: Path) -> None:
+    def test_after_checkout(self, git_repo: Path) -> None:
         """get_current_branch reflects branch switches."""
         subprocess.run(
-            ["git", "-C", str(tmp_repo), "checkout", "-b", "feat/test"],
+            ["git", "-C", str(git_repo), "checkout", "-b", "feat/test"],
             check=True,
             capture_output=True,
         )
-        branch = get_current_branch(cwd=tmp_repo)
+        branch = get_current_branch(cwd=git_repo)
         assert branch == "feat/test"
 
 
 class TestGetDefaultBranch:
-    def test_returns_main_or_master(self, tmp_repo: Path) -> None:
+    def test_returns_main_or_master(self, git_repo: Path) -> None:
         """get_default_branch returns main or master."""
-        branch = get_default_branch(cwd=tmp_repo)
+        branch = get_default_branch(cwd=git_repo)
         assert branch in ("main", "master")
 
     def test_returns_main_fallback(self, tmp_path: Path) -> None:

@@ -13,7 +13,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, cast
 
-from devteam.git.helpers import GhError, gh_run, git_run
+from devteam.git.helpers import GhError, GitError, gh_run, git_run
 
 
 @dataclass(frozen=True)
@@ -53,10 +53,10 @@ def check_push_access(repo_nwo: str) -> bool:
 
     try:
         result = gh_run(
-            ["api", f"repos/{repo_nwo}", "--jq", ".permissions"],
+            ["api", f"repos/{repo_nwo}"],
             parse_json=True,
         )
-        permissions = cast(dict[str, Any], result)
+        permissions = result.get("permissions", {}) if isinstance(result, dict) else {}
         return permissions.get("push", False)
     except GhError:
         return False
@@ -217,13 +217,13 @@ def setup_fork_remotes(
     # Set origin to the fork
     try:
         git_run(["remote", "set-url", "origin", fork_url], cwd=repo_root)
-    except Exception:
+    except GitError:
         git_run(["remote", "add", "origin", fork_url], cwd=repo_root)
 
     # Set upstream to the original repo
     try:
         git_run(["remote", "set-url", "upstream", upstream_url], cwd=repo_root)
-    except Exception:
+    except GitError:
         git_run(["remote", "add", "upstream", upstream_url], cwd=repo_root)
 
 
@@ -248,7 +248,7 @@ def _parse_nwo_from_url(url: str) -> str:
     url = url.strip()
 
     # SSH format: git@github.com:owner/repo.git
-    if url.startswith("git@"):
+    if url.startswith("git@github.com:"):
         path = url.split(":", 1)[1]
         path = path.removesuffix(".git")
         parts = path.split("/")
@@ -256,7 +256,7 @@ def _parse_nwo_from_url(url: str) -> str:
             return f"{parts[-2]}/{parts[-1]}"
 
     # HTTPS format: https://github.com/owner/repo.git
-    if "github.com" in url:
+    if "://github.com/" in url:
         # Remove protocol and host
         path = url.split("github.com/", 1)[-1]
         path = path.removesuffix(".git")
