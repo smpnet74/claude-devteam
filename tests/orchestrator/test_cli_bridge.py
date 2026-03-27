@@ -366,4 +366,3 @@ class TestHandleCancel:
         handle_start(store, title="Test", prompt="test")
         assert handle_cancel(store, "W-1")
         assert not handle_cancel(store, "W-1")
-
