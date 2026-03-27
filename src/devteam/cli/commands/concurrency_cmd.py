@@ -26,7 +26,8 @@ def register_concurrency_commands(app: typer.Typer) -> None:
             typer.echo(f"Error: {e}")
             raise typer.Exit(code=1)
 
-        # In production, db comes from the daemon's SQLite connection.
-        # For now, emit a message indicating the logic is wired.
-        typer.echo(f"Would set {job_id}/{task_id} priority to {priority.name.lower()}.")
-        typer.echo("(Database connection will be wired in daemon integration.)")
+        typer.echo(
+            "Error: 'prioritize' requires a running daemon (not yet implemented).",
+            err=True,
+        )
+        raise typer.Exit(code=1)

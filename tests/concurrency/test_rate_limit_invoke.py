@@ -5,6 +5,7 @@ orchestrator correctly sets the global pause, waits, clears, and retries.
 """
 
 import sqlite3
+import time
 from unittest.mock import MagicMock
 
 import pytest
@@ -13,6 +14,7 @@ from devteam.concurrency.rate_limit import (
     is_paused,
     get_global_pause,
     set_global_pause,
+    clear_global_pause,
     DEFAULT_BACKOFF_SECONDS,
 )
 from devteam.concurrency.queue import init_queue_table
@@ -150,3 +152,54 @@ class TestRateLimitAwareInvoke:
         assert 25 <= sleep_seconds <= 31
         # Then invoked successfully
         assert result == {"status": "completed"}
+
+    def test_does_not_clear_newer_pause(self, db):
+        """After sleeping, a newer pause set by another workflow is preserved."""
+        error = RateLimitError("Rate limit exceeded. Retry after 10 seconds.")
+
+        def mock_invoke_fn(*args, **kwargs):
+            if mock_invoke_fn.call_count == 0:
+                mock_invoke_fn.call_count += 1
+                raise error
+            return {"status": "completed"}
+
+        mock_invoke_fn.call_count = 0
+
+        def mock_sleep_fn(seconds):
+            # Simulate another workflow setting a newer, longer pause
+            # while we are sleeping
+            set_global_pause(db, seconds=3600, reason="rate_limit")
+
+        rate_limit_aware_invoke(
+            db=db,
+            invoke_fn=mock_invoke_fn,
+            role="backend",
+            task_id="T-1",
+            context="Build the API",
+            sleep_fn=mock_sleep_fn,
+        )
+
+        # The newer pause (3600s) must NOT have been cleared
+        assert is_paused(db) is True
+        pause = get_global_pause(db)
+        assert pause is not None
+        assert pause.remaining_seconds() > 3000
+
+    def test_config_driven_backoff(self, db):
+        """default_backoff parameter is threaded through to handle_rate_limit_error."""
+        error = RateLimitError("Rate limit exceeded.")  # unparseable
+        mock_invoke = MagicMock(side_effect=[error, {"status": "completed"}])
+        mock_sleep = MagicMock()
+
+        rate_limit_aware_invoke(
+            db=db,
+            invoke_fn=mock_invoke,
+            role="backend",
+            task_id="T-1",
+            context="Build the API",
+            default_backoff=600,
+            sleep_fn=mock_sleep,
+        )
+
+        # Should use our custom backoff, not the default 1800
+        mock_sleep.assert_called_once_with(600)
