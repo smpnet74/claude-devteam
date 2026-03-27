@@ -163,10 +163,8 @@ class TestBranchToDirname:
         with pytest.raises(ValueError, match="Unsafe branch name"):
             _branch_to_dirname("feat login")
 
-    def test_slashes_only_produces_empty_raises(self) -> None:
-        """Branch that is only slashes produces empty string after sub."""
-        # "/" becomes "-" which is valid, but "//" becomes "--" which is valid too
-        # Only truly empty after sub would be problematic
+    def test_slashes_converted_to_dashes(self) -> None:
+        """Normal slash-containing branch name is sanitized correctly."""
         result = _branch_to_dirname("feat/ok")
         assert result == "feat-ok"
 

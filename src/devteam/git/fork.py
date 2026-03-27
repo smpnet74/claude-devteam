@@ -265,8 +265,10 @@ def _parse_nwo_from_url(url: str) -> str:
 
     # SSH: ssh://git@github.com/owner/repo.git
     if url.startswith("ssh://git@github.com/"):
-        path = url.split("github.com/", 1)[1]
-        return path.removesuffix(".git")
+        path = url.split("github.com/", 1)[1].removesuffix(".git")
+        if "/" not in path or not path:
+            raise ValueError(f"Cannot parse owner/repo from URL: {url}")
+        return path
 
     # SSH format: git@github.com:owner/repo.git
     if url.startswith("git@github.com:"):
