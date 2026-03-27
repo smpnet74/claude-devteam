@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, cast
 
-from devteam.git.helpers import GitError, gh_run, git_run
+from devteam.git.helpers import GhError, GitError, gh_run, git_run
 from devteam.git.branch import remote_branch_exists
 from devteam.git.pr import find_existing_pr
 
@@ -111,7 +111,7 @@ def check_pr_merged(cwd: Path, pr_number: int) -> bool:
             ),
         )
         return data.get("state") == "MERGED"
-    except Exception:
+    except GhError:
         return False
 
 

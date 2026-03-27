@@ -3,6 +3,8 @@
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
+
 from devteam.git.pr import (
     PRInfo,
     PRCheckStatus,
@@ -166,6 +168,11 @@ class TestMergePR:
             call_str = str(mock_gh.call_args)
             assert "merge" in call_str
             assert "--squash" in call_str
+
+    def test_merge_invalid_strategy(self, tmp_path: Path):
+        """Rejects invalid merge strategy before calling gh."""
+        with pytest.raises(ValueError, match="Invalid merge strategy"):
+            merge_pr(tmp_path, 42, strategy="fast-forward")
 
     def test_merge_already_merged(self, tmp_path: Path):
         """Merging an already-merged PR is a no-op."""
