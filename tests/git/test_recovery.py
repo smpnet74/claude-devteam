@@ -8,7 +8,6 @@ import subprocess
 from pathlib import Path
 from unittest.mock import patch
 
-import pytest
 
 from devteam.git.recovery import (
     check_worktree_state,
