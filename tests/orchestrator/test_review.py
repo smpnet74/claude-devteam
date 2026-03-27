@@ -9,6 +9,7 @@ from devteam.orchestrator.review import (
     execute_post_pr_review,
     get_review_chain,
     is_small_fix_with_no_behavior_change,
+    sanitize_pr_context,
 )
 from devteam.orchestrator.schemas import (
     WorkType,
@@ -306,3 +307,56 @@ class TestExecutePostPRReview:
         call_kwargs = invoker.invoke.call_args.kwargs
         assert call_kwargs["role"] == "frontend_engineer"
         assert result.all_passed
+
+
+# ---------------------------------------------------------------------------
+# sanitize_pr_context
+# ---------------------------------------------------------------------------
+
+
+class TestSanitizePrContext:
+    def test_strips_control_characters(self) -> None:
+        text = "line one\x00\x01\x02 and more\x7f"
+        cleaned = sanitize_pr_context(text)
+        assert "\x00" not in cleaned
+        assert "\x01" not in cleaned
+        assert "\x7f" not in cleaned
+        assert "line one and more" == cleaned
+
+    def test_preserves_newlines_tabs(self) -> None:
+        text = "line one\nline two\ttab"
+        cleaned = sanitize_pr_context(text)
+        assert cleaned == text
+
+    def test_truncates_long_input(self) -> None:
+        text = "x" * 200
+        cleaned = sanitize_pr_context(text, max_length=100)
+        assert len(cleaned) > 100  # includes truncation notice
+        assert cleaned.endswith("[...truncated...]")
+        assert cleaned[:100] == "x" * 100
+
+    def test_short_input_not_truncated(self) -> None:
+        text = "short"
+        cleaned = sanitize_pr_context(text)
+        assert cleaned == text
+
+    def test_empty_string(self) -> None:
+        assert sanitize_pr_context("") == ""
+
+    def test_sanitization_applied_in_execute(self) -> None:
+        """Verify sanitize_pr_context is actually called during execution."""
+        invoker = MagicMock()
+        invoker.invoke.return_value = _review("approved")
+
+        # Pass context with control characters
+        execute_post_pr_review(
+            WorkType.RESEARCH,
+            "clean\x00text",
+            invoker,
+        )
+
+        # The prompt sent to the invoker should be sanitized
+        call_kwargs = invoker.invoke.call_args.kwargs
+        prompt = call_kwargs["prompt"]
+        assert "\x00" not in prompt
+        assert "cleantext" in prompt

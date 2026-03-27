@@ -7,6 +7,7 @@ This module handles post-PR shared services review.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 
 from pydantic import ValidationError
@@ -16,6 +17,29 @@ from devteam.orchestrator.schemas import (
     ReviewResult,
     WorkType,
 )
+
+
+# ---------------------------------------------------------------------------
+# pr_context sanitization
+# ---------------------------------------------------------------------------
+
+# Maximum length for pr_context before truncation (characters).
+_MAX_PR_CONTEXT_LENGTH = 100_000
+
+# Regex for ASCII control characters (C0 range except \n \r \t).
+_CONTROL_CHAR_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
+
+
+def sanitize_pr_context(text: str, max_length: int = _MAX_PR_CONTEXT_LENGTH) -> str:
+    """Sanitize untrusted pr_context before interpolating into prompts.
+
+    - Strips ASCII control characters (except newline, carriage return, tab).
+    - Truncates to *max_length* characters with a truncation notice.
+    """
+    cleaned = _CONTROL_CHAR_RE.sub("", text)
+    if len(cleaned) > max_length:
+        cleaned = cleaned[:max_length] + "\n\n[...truncated...]"
+    return cleaned
 
 
 @dataclass(frozen=True)
@@ -111,6 +135,9 @@ def execute_post_pr_review(
     Each gate is executed in sequence. If a required gate fails,
     the chain stops (caller decides whether to trigger revision).
     """
+    # Sanitize untrusted pr_context before embedding in prompts
+    pr_context = sanitize_pr_context(pr_context)
+
     chain = get_review_chain(work_type, assigned_to=assigned_to)
     gate_results: dict[str, ReviewResult] = {}
     failed_gates: list[str] = []
