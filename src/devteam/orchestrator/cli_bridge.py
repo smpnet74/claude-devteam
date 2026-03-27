@@ -13,7 +13,8 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from devteam.orchestrator.escalation import EscalationResult, resolve_with_human_answer
-from devteam.orchestrator.jobs import Job, create_job
+from devteam.models.entities import JobStatus
+from devteam.orchestrator.jobs import Job, create_job, transition_job
 from devteam.orchestrator.routing import IntakeContext
 from devteam.orchestrator.schemas import QuestionRecord
 
@@ -45,17 +46,16 @@ class QuestionTracker:
 
 
 # ---------------------------------------------------------------------------
-# JobStore -- thread-safe in-memory store
+# JobStore -- in-memory store
 # ---------------------------------------------------------------------------
 
 
 class JobStore:
-    """In-memory job store.  In production, backed by DBOS/SQLite.
+    """In-memory store with dict-access locking. Callers must coordinate
+    mutations to returned Job objects.
 
-    This is a minimal interface for Plan 3.  Plan 1 provides the actual
-    persistence layer.
-
-    Thread-safe: all mutations are guarded by a reentrant lock.
+    In production, backed by DBOS/SQLite.  This is a minimal interface for
+    Plan 3.  Plan 1 provides the actual persistence layer.
     """
 
     def __init__(self) -> None:
@@ -193,7 +193,10 @@ def handle_comment(
     Returns:
         True if comment was attached successfully.
     """
-    job_id, task_id = _parse_task_ref(task_ref, store)
+    try:
+        job_id, task_id = _parse_task_ref(task_ref, store)
+    except ValueError:
+        raise  # Propagate ambiguous-ref error to caller
     if not job_id:
         return False
 
@@ -297,6 +300,11 @@ def handle_cancel(
     if not job:
         return False
     job.cancelled = True
+    if job.status not in (JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.CANCELED):
+        try:
+            transition_job(job, JobStatus.CANCELED)
+        except ValueError:
+            pass  # Already terminal
     store.save(job)
     return True
 
@@ -307,7 +315,11 @@ def handle_cancel(
 
 
 def _parse_task_ref(ref: str, store: JobStore) -> tuple[str | None, str]:
-    """Parse 'W-1/T-3' or 'T-3' into (job_id, task_id)."""
+    """Parse 'W-1/T-3' or 'T-3' into (job_id, task_id).
+
+    Raises ``ValueError`` when the short form is used but multiple jobs
+    are active, making the reference ambiguous.
+    """
     if "/" in ref:
         parts = ref.split("/", 1)
         return parts[0], parts[1]
@@ -315,6 +327,8 @@ def _parse_task_ref(ref: str, store: JobStore) -> tuple[str | None, str]:
     jobs = store.list_jobs()
     if len(jobs) == 1:
         return jobs[0].id, ref
+    if len(jobs) > 1:
+        raise ValueError("Multiple jobs active. Use W-1/T-3 to specify which job.")
     return None, ref
 
 

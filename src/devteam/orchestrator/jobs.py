@@ -35,6 +35,12 @@ from devteam.orchestrator.schemas import (
 from devteam.orchestrator.task_workflow import TaskWorkflowResult
 
 
+# TODO(persistence): This Job dataclass uses `id` while models.entities.Job uses
+# `job_id` with W-N format validation. When DBOS persistence is wired in,
+# reconcile these two classes. The persistence model also enforces Priority enum
+# and has spec_path/plan_path instead of the IntakeContext stored here.
+
+
 @dataclass
 class Job:
     """A top-level job with its full workflow state.
@@ -218,6 +224,9 @@ def execute_job(
             transition_job(job, JobStatus.EXECUTING)
             transition_job(job, JobStatus.COMPLETED)
             return job
+
+        if not task_launcher or not task_checker:
+            raise ValueError("task_launcher and task_checker are required for non-research routes")
 
         # Step 3: Decompose
         transition_job(job, JobStatus.DECOMPOSING)

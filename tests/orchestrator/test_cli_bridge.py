@@ -2,6 +2,7 @@
 
 import tempfile
 
+import pytest
 
 from devteam.models.entities import JobStatus
 from devteam.orchestrator.cli_bridge import (
@@ -201,13 +202,13 @@ class TestHandleComment:
         success = handle_comment(store, "T-1", "feedback")
         assert not success
 
-    def test_comment_shorthand_multiple_jobs(self) -> None:
+    def test_comment_shorthand_multiple_jobs_raises(self) -> None:
         store = JobStore()
         handle_start(store, title="Job 1", prompt="a")
         handle_start(store, title="Job 2", prompt="b")
-        # Ambiguous -- cannot resolve
-        success = handle_comment(store, "T-1", "feedback")
-        assert not success
+        # Ambiguous -- raises ValueError with helpful message
+        with pytest.raises(ValueError, match="Multiple jobs active"):
+            handle_comment(store, "T-1", "feedback")
 
 
 # ---------------------------------------------------------------------------
@@ -304,6 +305,17 @@ class TestHandleCancel:
         result = handle_cancel(store, "W-1")
         assert result
         assert job.cancelled
+
+    def test_cancel_transitions_active_job(self) -> None:
+        """Cancel should transition non-terminal jobs to CANCELED status."""
+        store = JobStore()
+        job = handle_start(store, title="Test", prompt="test")
+        assert job.status == JobStatus.CREATED
+
+        result = handle_cancel(store, "W-1")
+        assert result
+        assert job.cancelled
+        assert job.status == JobStatus.CANCELED
 
     def test_cancel_nonexistent_job(self) -> None:
         store = JobStore()

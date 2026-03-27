@@ -343,6 +343,34 @@ class TestSanitizePrContext:
     def test_empty_string(self) -> None:
         assert sanitize_pr_context("") == ""
 
+    def test_strips_bidi_overrides(self) -> None:
+        """Bidirectional override characters should be stripped."""
+        text = "hello\u202aworld\u202b!\u202e\u2066test\u2069"
+        cleaned = sanitize_pr_context(text)
+        assert "\u202a" not in cleaned
+        assert "\u202b" not in cleaned
+        assert "\u202e" not in cleaned
+        assert "\u2066" not in cleaned
+        assert "\u2069" not in cleaned
+        assert cleaned == "helloworld!test"
+
+    def test_strips_zero_width_characters(self) -> None:
+        """Zero-width chars (ZWSP, ZWNJ, ZWJ, FEFF/BOM) should be stripped."""
+        text = "foo\u200bbar\u200cbaz\ufeff"
+        cleaned = sanitize_pr_context(text)
+        assert "\u200b" not in cleaned
+        assert "\u200c" not in cleaned
+        assert "\ufeff" not in cleaned
+        assert cleaned == "foobarbaz"
+
+    def test_strips_c1_control_characters(self) -> None:
+        """C1 control characters (U+0080-U+009F) should be stripped."""
+        text = "start\x80middle\x9fend"
+        cleaned = sanitize_pr_context(text)
+        assert "\x80" not in cleaned
+        assert "\x9f" not in cleaned
+        assert cleaned == "startmiddleend"
+
     def test_sanitization_applied_in_execute(self) -> None:
         """Verify sanitize_pr_context is actually called during execution."""
         invoker = MagicMock()

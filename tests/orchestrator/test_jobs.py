@@ -212,6 +212,18 @@ class TestExecuteJob:
         with pytest.raises(ValueError, match="no intake"):
             execute_job(job, MagicMock())
 
+    def test_non_research_without_launchers_raises(self) -> None:
+        """Non-research routes require task_launcher and task_checker."""
+        invoker = MagicMock()
+        # route_intake returns FULL_PROJECT when spec+plan are present
+        intake = IntakeContext(spec="Build an API", plan="Step 1: schema")
+        job = create_job("W-1", "My App", intake)
+
+        result = execute_job(job, invoker, task_launcher=None, task_checker=None)
+        assert result.status == JobStatus.FAILED
+        assert result.error is not None
+        assert "task_launcher and task_checker are required" in result.error
+
     def test_routing_failure_transitions_to_failed(self) -> None:
         """If routing invocation fails, job transitions to FAILED."""
         invoker = MagicMock()
