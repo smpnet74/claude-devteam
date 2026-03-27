@@ -148,7 +148,7 @@ class TestAttemptResolution:
         assert "failed schema validation" in (attempt.reasoning or "")
 
     def test_missing_reasoning_returns_unresolved(self) -> None:
-        """Invoker returns dict without reasoning -> fails validation."""
+        """Invoker returns dict without reasoning -> returns unresolved."""
         invoker = MagicMock()
         invoker.invoke.return_value = {"resolved": True, "answer": "Use Redis"}
         q = _make_question()

@@ -1,5 +1,5 @@
-# TruffleHog configuration for CodeRabbit secret scanning
-# CodeRabbit runs TruffleHog server-side in filesystem mode using this file.
+# TruffleHog configuration for CodeRabbit secret scanning.
+# CodeRabbit requires this file in the repo root to activate TruffleHog scans on PRs.
 # Built-in 700+ credential detectors are active by default.
 # Docs: https://docs.trufflesecurity.com/configuration-file-reference
 

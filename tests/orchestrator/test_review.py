@@ -236,29 +236,23 @@ class TestExecutePostPRReview:
         assert len(result.skipped_gates) == 0
 
     def test_malformed_review_missing_verdict(self) -> None:
-        """Invoker returns dict without 'verdict' -- ValidationError propagates."""
-        from pydantic import ValidationError
-
+        """Invoker returns dict without 'verdict' -- RuntimeError wrapping ValidationError."""
         invoker = MagicMock()
         invoker.invoke.return_value = {"summary": "ok"}  # missing verdict
 
-        with pytest.raises(ValidationError):
+        with pytest.raises(RuntimeError, match="returned invalid payload"):
             execute_post_pr_review(WorkType.CODE, "PR context", invoker)
 
     def test_malformed_review_invalid_verdict(self) -> None:
-        """Invoker returns dict with invalid verdict value -- ValidationError propagates."""
-        from pydantic import ValidationError
-
+        """Invoker returns dict with invalid verdict value -- RuntimeError wrapping ValidationError."""
         invoker = MagicMock()
         invoker.invoke.return_value = {"verdict": "yolo", "summary": "ok", "comments": []}
 
-        with pytest.raises(ValidationError):
+        with pytest.raises(RuntimeError, match="returned invalid payload"):
             execute_post_pr_review(WorkType.CODE, "PR context", invoker)
 
     def test_malformed_review_needs_revision_no_comments(self) -> None:
         """needs_revision verdict without comments should fail validation."""
-        from pydantic import ValidationError
-
         invoker = MagicMock()
         invoker.invoke.return_value = {
             "verdict": "needs_revision",
@@ -266,7 +260,7 @@ class TestExecutePostPRReview:
             "comments": [],
         }
 
-        with pytest.raises(ValidationError, match="requires at least one comment"):
+        with pytest.raises(RuntimeError, match="returned invalid payload"):
             execute_post_pr_review(WorkType.CODE, "PR context", invoker)
 
     def test_all_passed_ignores_optional_gate_failures(self) -> None:

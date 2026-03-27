@@ -9,6 +9,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from pydantic import ValidationError
+
 from devteam.orchestrator.routing import InvokerProtocol
 from devteam.orchestrator.schemas import (
     ReviewResult,
@@ -141,7 +143,17 @@ def execute_post_pr_review(
                 failed_gates.append(gate.name)
                 continue
             raise RuntimeError(f"Post-PR review gate '{gate.name}' invocation failed: {e}") from e
-        result = ReviewResult.model_validate(raw)
+
+        try:
+            result = ReviewResult.model_validate(raw)
+        except ValidationError as e:
+            if not gate.required:
+                # Optional gate malformed response: treat as failed-but-non-blocking
+                failed_gates.append(gate.name)
+                continue
+            raise RuntimeError(
+                f"Post-PR review gate '{gate.name}' returned invalid payload: {e}"
+            ) from e
         gate_results[gate.name] = result
 
         if result.needs_revision:

@@ -924,3 +924,23 @@ class TestEscalationAttemptResult:
         result = EscalationAttemptResult.model_validate(data)
         assert result.resolved
         assert result.answer == "Use Postgres"
+
+    def test_resolved_true_answer_none_raises(self):
+        with pytest.raises(ValueError, match="answer is required when resolved=True"):
+            EscalationAttemptResult(resolved=True, answer=None, reasoning="some reasoning")
+
+    def test_resolved_true_answer_empty_raises(self):
+        with pytest.raises(ValueError, match="answer is required when resolved=True"):
+            EscalationAttemptResult(resolved=True, answer="", reasoning="some reasoning")
+
+    def test_resolved_true_answer_present_succeeds(self):
+        result = EscalationAttemptResult(
+            resolved=True, answer="use JWT", reasoning="some reasoning"
+        )
+        assert result.resolved
+        assert result.answer == "use JWT"
+
+    def test_resolved_false_answer_none_succeeds(self):
+        result = EscalationAttemptResult(resolved=False, answer=None, reasoning="some reasoning")
+        assert not result.resolved
+        assert result.answer is None

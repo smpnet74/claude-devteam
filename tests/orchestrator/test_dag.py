@@ -81,6 +81,18 @@ class TestBuildDAG:
         with pytest.raises(ValueError, match="Dependency cycle detected"):
             build_dag(decomp)
 
+    def test_duplicate_task_ids_raises(self) -> None:
+        """Duplicate task IDs in decomposition should raise ValueError."""
+        t1a = _make_task("T-1")
+        t1b = _make_task("T-1")
+        with pytest.raises(ValueError, match="Duplicate task IDs"):
+            decomp = DecompositionResult(
+                tasks=[t1a, t1b],
+                peer_assignments={},
+                parallel_groups=[],
+            )
+            build_dag(decomp)
+
     def test_unknown_dependency_raises(self) -> None:
         # Use model_construct to bypass DecompositionResult's own graph
         # validation so we can test the build_dag guard in isolation.

@@ -179,12 +179,12 @@ def execute_task_workflow(
     """
     result = TaskWorkflowResult(task_id=ctx.task.id, status=TaskStatus.EXECUTING)
     revision_feedback: str | None = None
+    revision_count = 0
 
-    for iteration in range(max_revisions + 1):
+    while True:
         # Step 1: Engineer executes
         impl = engineer_execute(ctx, invoker, revision_feedback)
         result.implementation = impl
-        result.revision_count = iteration
 
         # Check if engineer raised a question
         if impl.status in ("needs_clarification", "blocked"):
@@ -192,23 +192,29 @@ def execute_task_workflow(
             question = QuestionRecord(
                 question=impl.question or "Unspecified question",
                 question_type=q_type,
-                context=f"Raised during iteration {iteration} of task {ctx.task.id}",
+                context=f"Raised during revision {revision_count} of task {ctx.task.id}",
             )
 
             # Attempt escalation before giving up
             esc_result = escalate_question(question, invoker, em_role=ctx.em_role)
 
             if esc_result.resolved and esc_result.answer:
-                # Feed the answer back as revision feedback and re-execute
-                revision_feedback = (
-                    f"Your question was answered by escalation "
+                # Append the escalation answer to existing feedback
+                escalation_feedback = (
+                    f"Question resolved by escalation "
                     f"({esc_result.final_level.value}): {esc_result.answer}"
                 )
+                if revision_feedback:
+                    revision_feedback += f"\n{escalation_feedback}"
+                else:
+                    revision_feedback = escalation_feedback
+                # Clarification retries do NOT count against the revision budget
                 continue
 
             # Escalation could not resolve -- needs human input
             result.status = TaskStatus.WAITING_ON_QUESTION
             result.question = question
+            result.revision_count = revision_count
             return result
 
         # Step 2: Peer review (enforced before EM review)
@@ -219,8 +225,12 @@ def execute_task_workflow(
         # If peer review requires revision (needs_revision or blocked),
         # don't proceed to EM -- loop back to the engineer
         if pr.needs_revision:
+            revision_count += 1
+            if revision_count > max_revisions:
+                break
             revision_feedback = _build_revision_feedback(pr)
             result.status = TaskStatus.REVISION_REQUESTED
+            result.revision_count = revision_count
             continue
 
         # Step 3: EM review
@@ -230,13 +240,19 @@ def execute_task_workflow(
         if not em.needs_revision:
             # Approved!
             result.status = TaskStatus.APPROVED
+            result.revision_count = revision_count
             return result
 
         # EM requested revision -- loop back
+        revision_count += 1
+        if revision_count > max_revisions:
+            break
         revision_feedback = _build_revision_feedback(em)
         result.status = TaskStatus.REVISION_REQUESTED
+        result.revision_count = revision_count
 
     # Circuit breaker -- max revisions exceeded
     result.status = TaskStatus.FAILED
+    result.revision_count = revision_count
     result.error = f"Task {ctx.task.id} failed after {max_revisions} revision iterations"
     return result

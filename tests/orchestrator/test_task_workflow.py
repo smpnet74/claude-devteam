@@ -426,6 +426,59 @@ class TestQuestionEscalation:
         assert result.status == TaskStatus.APPROVED
         assert engineer_calls == 2
 
+    def test_question_during_revision_resolved_then_succeeds(self) -> None:
+        """First exec succeeds, peer rejects, re-exec raises question, escalation resolves,
+        third exec succeeds, review approves. Verify full flow works."""
+        invoker = MagicMock()
+        engineer_calls = 0
+        em_calls = 0
+        peer_calls = 0
+
+        def side_effect(role: str, prompt: str, **kwargs: object) -> dict[str, object]:
+            nonlocal engineer_calls, em_calls, peer_calls
+            if role == "backend_engineer":
+                engineer_calls += 1
+                if engineer_calls == 1:
+                    # First execution: succeeds
+                    return _impl_result()
+                if engineer_calls == 2:
+                    # Second execution (after peer rejection): needs clarification
+                    return _impl_result(
+                        status="needs_clarification",
+                        question="Which auth strategy?",
+                    )
+                # Third execution (after escalation resolves): succeeds
+                return _impl_result()
+            if role == "frontend_engineer":
+                peer_calls += 1
+                if peer_calls == 1:
+                    # First peer review: needs revision
+                    return _review_result("needs_revision")
+                # Second peer review: approved
+                return _review_result("approved")
+            if role == "em_team_a":
+                em_calls += 1
+                if em_calls == 1:
+                    # Escalation: EM resolves the question
+                    return {
+                        "resolved": True,
+                        "answer": "Use JWT",
+                        "reasoning": "Matches our auth stack",
+                    }
+                # EM review: approved
+                return _review_result("approved")
+            return _review_result("approved")
+
+        invoker.invoke.side_effect = side_effect
+        ctx = _make_ctx()
+
+        result = execute_task_workflow(ctx, invoker)
+
+        assert result.status == TaskStatus.APPROVED
+        assert engineer_calls == 3
+        # Only the peer rejection counts as a revision, not the clarification retry
+        assert result.revision_count == 1
+
     def test_escalation_needs_human_task_pauses(self) -> None:
         """Escalation reaches human level -> task pauses with question."""
         invoker = MagicMock()

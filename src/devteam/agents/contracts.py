@@ -283,6 +283,12 @@ class EscalationAttemptResult(BaseModel):
     answer: str | None = None
     reasoning: str = Field(min_length=1)
 
+    @model_validator(mode="after")
+    def _answer_required_when_resolved(self) -> EscalationAttemptResult:
+        if self.resolved and (self.answer is None or not self.answer.strip()):
+            raise ValueError("answer is required when resolved=True")
+        return self
+
 
 class RoutingResult(BaseModel):
     """Result envelope for CEO routing decision."""
