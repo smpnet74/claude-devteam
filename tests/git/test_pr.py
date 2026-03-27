@@ -333,3 +333,118 @@ class TestCodeRabbitCategorization:
         assert len(categorized.errors) == 0
         assert len(categorized.warnings) == 0
         assert len(categorized.nitpicks) == 0
+
+
+class TestCheckPRStatusNonZeroExit:
+    """gh pr checks returns non-zero for pending (exit 8) and failed checks."""
+
+    def test_pending_checks_reported_correctly(self, tmp_path: Path):
+        """Non-zero exit with valid JSON should still parse pending status."""
+        with patch("devteam.git.pr.gh_run") as mock_gh:
+            mock_gh.side_effect = [
+                # gh pr checks with check=False returns JSON even on non-zero exit
+                [
+                    {"name": "ci", "state": "pending", "bucket": "pending"},
+                    {"name": "lint", "state": "completed", "bucket": "pass"},
+                ],
+                {"reviews": [], "comments": [], "reviewDecision": ""},
+            ]
+            feedback = check_pr_status(tmp_path, 42)
+            assert feedback.check_status == PRCheckStatus.PENDING
+            assert not feedback.ci_complete
+            assert not feedback.api_errors
+
+    def test_failed_checks_reported_correctly(self, tmp_path: Path):
+        """Non-zero exit with failed checks should report SOME_FAILED."""
+        with patch("devteam.git.pr.gh_run") as mock_gh:
+            mock_gh.side_effect = [
+                [
+                    {"name": "ci", "state": "completed", "bucket": "fail"},
+                    {"name": "lint", "state": "completed", "bucket": "pass"},
+                ],
+                {"reviews": [], "comments": [], "reviewDecision": ""},
+            ]
+            feedback = check_pr_status(tmp_path, 42)
+            assert feedback.check_status == PRCheckStatus.SOME_FAILED
+            assert "ci" in feedback.failed_checks
+            assert feedback.all_green is False
+
+
+class TestFindExistingPRErrors:
+    """find_existing_pr should propagate real errors, not treat them as 'no PR'."""
+
+    def test_auth_failure_propagates(self, tmp_path: Path):
+        """Auth errors should raise, not return None."""
+        from devteam.git.helpers import GhError
+
+        with patch("devteam.git.pr.gh_run") as mock_gh:
+            mock_gh.side_effect = GhError(["pr", "list"], 1, "authentication required")
+            with pytest.raises(GhError):
+                find_existing_pr(tmp_path, "feat/test")
+
+    def test_404_returns_none(self, tmp_path: Path):
+        """404/not-found should return None (repo doesn't exist)."""
+        from devteam.git.helpers import GhError
+
+        with patch("devteam.git.pr.gh_run") as mock_gh:
+            mock_gh.side_effect = GhError(["pr", "list"], 1, "HTTP 404: Not Found")
+            result = find_existing_pr(tmp_path, "feat/test")
+            assert result is None
+
+
+class TestCrossForkPRLookup:
+    """find_existing_pr should disambiguate PRs from different forks."""
+
+    def test_filters_by_expected_owner(self, tmp_path: Path):
+        """When expected_owner is set, only PRs from that owner match."""
+        with patch("devteam.git.pr.gh_run") as mock_gh:
+            mock_gh.return_value = [
+                {
+                    "number": 10,
+                    "url": "https://github.com/org/repo/pull/10",
+                    "headRefName": "fix/test",
+                    "state": "OPEN",
+                    "headRepositoryOwner": {"login": "other-user"},
+                },
+                {
+                    "number": 15,
+                    "url": "https://github.com/org/repo/pull/15",
+                    "headRefName": "fix/test",
+                    "state": "OPEN",
+                    "headRepositoryOwner": {"login": "my-fork"},
+                },
+            ]
+            result = find_existing_pr(tmp_path, "fix/test", expected_owner="my-fork")
+            assert result is not None
+            assert result.number == 15
+
+    def test_no_match_for_expected_owner(self, tmp_path: Path):
+        """Returns None when no PR matches the expected owner."""
+        with patch("devteam.git.pr.gh_run") as mock_gh:
+            mock_gh.return_value = [
+                {
+                    "number": 10,
+                    "url": "https://github.com/org/repo/pull/10",
+                    "headRefName": "fix/test",
+                    "state": "OPEN",
+                    "headRepositoryOwner": {"login": "other-user"},
+                },
+            ]
+            result = find_existing_pr(tmp_path, "fix/test", expected_owner="my-fork")
+            assert result is None
+
+    def test_no_owner_filter_returns_first(self, tmp_path: Path):
+        """Without expected_owner, returns the first match (backward compatible)."""
+        with patch("devteam.git.pr.gh_run") as mock_gh:
+            mock_gh.return_value = [
+                {
+                    "number": 10,
+                    "url": "https://github.com/org/repo/pull/10",
+                    "headRefName": "fix/test",
+                    "state": "OPEN",
+                    "headRepositoryOwner": {"login": "anyone"},
+                },
+            ]
+            result = find_existing_pr(tmp_path, "fix/test")
+            assert result is not None
+            assert result.number == 10

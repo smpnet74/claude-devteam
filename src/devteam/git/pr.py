@@ -65,6 +65,7 @@ def find_existing_pr(
     cwd: Path,
     branch: str,
     repo: str | None = None,
+    expected_owner: str | None = None,
 ) -> PRInfo | None:
     """Check if a PR already exists for the given branch.
 
@@ -74,6 +75,8 @@ def find_existing_pr(
         cwd: Working directory (must be in a git repo).
         branch: Head branch name.
         repo: Optional upstream repo in 'owner/name' format.
+        expected_owner: Optional fork owner to filter by in cross-fork scenarios.
+            When set, only PRs from this owner's fork are considered.
 
     Returns:
         PRInfo if a PR exists, None otherwise.
@@ -86,7 +89,7 @@ def find_existing_pr(
         "--state",
         "open",
         "--json",
-        "number,url,headRefName,state",
+        "number,url,headRefName,state,headRepositoryOwner",
     ]
     if repo:
         args.extend(["--repo", repo])
@@ -101,6 +104,14 @@ def find_existing_pr(
 
     if not prs:
         return None
+
+    # Filter by expected owner if specified (cross-fork disambiguation)
+    if expected_owner:
+        prs = [
+            p for p in prs if p.get("headRepositoryOwner", {}).get("login", "") == expected_owner
+        ]
+        if not prs:
+            return None
 
     pr = prs[0]
     return PRInfo(
@@ -198,16 +209,20 @@ def check_pr_status(cwd: Path, pr_number: int) -> PRFeedback:
 
     # Get CI check status
     # gh pr checks supports fields: name, state, bucket, workflow (not conclusion)
+    # NOTE: gh pr checks returns non-zero exit for pending (exit 8) and failed checks.
+    # Use check=False to parse JSON regardless of exit code.
     try:
-        checks: list[dict[str, Any]] = cast(
-            list[dict[str, Any]],
-            gh_run(
-                ["pr", "checks", str(pr_number), "--json", "name,state,bucket"],
-                cwd=cwd,
-                parse_json=True,
-            ),
+        checks_result = gh_run(
+            ["pr", "checks", str(pr_number), "--json", "name,state,bucket"],
+            cwd=cwd,
+            check=False,
+            parse_json=True,
+        )
+        checks: list[dict[str, Any]] = (
+            cast(list[dict[str, Any]], checks_result) if isinstance(checks_result, list) else []
         )
     except GhError as e:
+        # Real transport/auth/schema failure — not just non-zero exit from pending/failed
         checks = []
         api_errors.append(f"Failed to fetch CI checks: {e.stderr}")
 
