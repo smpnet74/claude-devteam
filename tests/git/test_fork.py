@@ -13,6 +13,7 @@ from devteam.git.fork import (
     ForkResult,
     ForkStatus,
     _parse_nwo_from_url,
+    _validate_nwo,
     check_push_access,
     create_fork,
     ensure_fork,
@@ -47,12 +48,12 @@ class TestCheckPushAccess:
 
     def test_empty_nwo_raises(self) -> None:
         """Empty repo NWO raises ValueError."""
-        with pytest.raises(ValueError, match="owner/name"):
+        with pytest.raises(ValueError, match="Invalid owner/repo format"):
             check_push_access("")
 
     def test_malformed_nwo_raises(self) -> None:
         """Malformed repo NWO raises ValueError."""
-        with pytest.raises(ValueError, match="owner/name"):
+        with pytest.raises(ValueError, match="Invalid owner/repo format"):
             check_push_access("noslash")
 
 
@@ -89,7 +90,7 @@ class TestFindExistingFork:
 
     def test_empty_nwo_raises(self) -> None:
         """Empty upstream NWO raises ValueError."""
-        with pytest.raises(ValueError, match="owner/name"):
+        with pytest.raises(ValueError, match="Invalid owner/repo format"):
             find_existing_fork("")
 
     def test_no_matching_parent(self) -> None:
@@ -157,7 +158,7 @@ class TestEnsureFork:
 
     def test_empty_nwo_raises(self) -> None:
         """Empty upstream NWO raises ValueError."""
-        with pytest.raises(ValueError, match="owner/name"):
+        with pytest.raises(ValueError, match="Invalid owner/repo format"):
             ensure_fork("")
 
 
@@ -309,3 +310,38 @@ class TestParseNwoFromUrl:
         """URLs with 'github.com' as substring of another host are rejected."""
         with pytest.raises(ValueError, match="Cannot parse"):
             _parse_nwo_from_url("https://notgithub.com/org/repo.git")
+
+    def test_github_in_path_raises(self) -> None:
+        """URLs where github.com appears in query/path are rejected."""
+        with pytest.raises(ValueError, match="Cannot parse"):
+            _parse_nwo_from_url("https://evil.com/redirect?to=github.com/org/repo")
+
+
+class TestValidateNwo:
+    def test_valid_nwo(self) -> None:
+        """Valid owner/repo passes validation."""
+        _validate_nwo("owner/repo")  # should not raise
+
+    def test_empty_string(self) -> None:
+        with pytest.raises(ValueError, match="Invalid owner/repo format"):
+            _validate_nwo("")
+
+    def test_no_slash(self) -> None:
+        with pytest.raises(ValueError, match="Invalid owner/repo format"):
+            _validate_nwo("noslash")
+
+    def test_too_many_slashes(self) -> None:
+        with pytest.raises(ValueError, match="Invalid owner/repo format"):
+            _validate_nwo("a/b/c")
+
+    def test_empty_owner(self) -> None:
+        with pytest.raises(ValueError, match="Invalid owner/repo format"):
+            _validate_nwo("/repo")
+
+    def test_empty_repo(self) -> None:
+        with pytest.raises(ValueError, match="Invalid owner/repo format"):
+            _validate_nwo("owner/")
+
+    def test_just_slash(self) -> None:
+        with pytest.raises(ValueError, match="Invalid owner/repo format"):
+            _validate_nwo("/")

@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
 from typing import Any, cast
+from urllib.parse import urlparse
 
 from devteam.git.helpers import GhError, GitError, gh_run, git_run
 
@@ -44,6 +45,13 @@ class ForkResult:
     fork_nwo: str | None = None  # owner/repo of the fork
 
 
+def _validate_nwo(nwo: str) -> None:
+    """Validate owner/repo format."""
+    parts = nwo.split("/")
+    if len(parts) != 2 or not all(parts):
+        raise ValueError(f"Invalid owner/repo format: {nwo!r}")
+
+
 def check_push_access(repo_nwo: str) -> bool:
     """Check if the authenticated user has push access to a repo.
 
@@ -56,8 +64,7 @@ def check_push_access(repo_nwo: str) -> bool:
     Raises:
         ValueError: If repo_nwo is empty or malformed.
     """
-    if not repo_nwo or "/" not in repo_nwo:
-        raise ValueError(f"repo_nwo must be in 'owner/name' format, got: {repo_nwo!r}")
+    _validate_nwo(repo_nwo)
 
     try:
         result = gh_run(
@@ -82,8 +89,7 @@ def find_existing_fork(upstream_nwo: str) -> str | None:
     Raises:
         ValueError: If upstream_nwo is empty or malformed.
     """
-    if not upstream_nwo or "/" not in upstream_nwo:
-        raise ValueError(f"upstream_nwo must be in 'owner/name' format, got: {upstream_nwo!r}")
+    _validate_nwo(upstream_nwo)
 
     try:
         result = gh_run(
@@ -159,8 +165,7 @@ def ensure_fork(upstream_nwo: str) -> ForkResult:
     Raises:
         ValueError: If upstream_nwo is empty or malformed.
     """
-    if not upstream_nwo or "/" not in upstream_nwo:
-        raise ValueError(f"upstream_nwo must be in 'owner/name' format, got: {upstream_nwo!r}")
+    _validate_nwo(upstream_nwo)
 
     if check_push_access(upstream_nwo):
         return ForkResult(status=ForkStatus.DIRECT)
@@ -279,12 +284,11 @@ def _parse_nwo_from_url(url: str) -> str:
             return f"{parts[-2]}/{parts[-1]}"
 
     # HTTPS format: https://github.com/owner/repo.git
-    if "://github.com/" in url:
-        # Remove protocol and host
-        path = url.split("github.com/", 1)[-1]
-        path = path.removesuffix(".git")
-        parts = path.split("/")
-        if len(parts) >= 2:
-            return f"{parts[0]}/{parts[1]}"
+    parsed = urlparse(url)
+    if parsed.hostname == "github.com":
+        path = parsed.path.lstrip("/").removesuffix(".git")
+        if "/" not in path or not path:
+            raise ValueError(f"Cannot parse owner/repo from URL: {url}")
+        return path
 
     raise ValueError(f"Cannot parse owner/repo from URL: {url!r}")
