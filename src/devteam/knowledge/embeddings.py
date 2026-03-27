@@ -87,6 +87,8 @@ class OllamaEmbedder:
             response.raise_for_status()
         except httpx.ConnectError as e:
             raise EmbeddingError(f"Ollama unavailable at {self.base_url}: {e}") from e
+        except httpx.TimeoutException as e:
+            raise EmbeddingError(f"Ollama timed out at {self.base_url}: {e}") from e
         except httpx.HTTPStatusError as e:
             raise EmbeddingError(
                 f"Ollama embedding failed (HTTP {e.response.status_code}): {e}"

@@ -322,8 +322,12 @@ class KnowledgeStore:
             params["project"] = project
 
         if tags:
-            tag_conditions = " OR ".join(f"tags CONTAINS '{tag}'" for tag in tags)
-            filters.append(f"({tag_conditions})")
+            tag_parts = []
+            for i, tag in enumerate(tags):
+                param_name = f"tag_{i}"
+                tag_parts.append(f"tags CONTAINS ${param_name}")
+                params[param_name] = tag
+            filters.append(f"({' OR '.join(tag_parts)})")
 
         where_clause = " AND ".join(filters) if filters else ""
         where_sql = f"WHERE {where_clause}" if where_clause else ""

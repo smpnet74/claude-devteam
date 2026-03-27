@@ -117,3 +117,15 @@ class TestOllamaEmbedder:
     async def test_default_base_url(self):
         embedder = OllamaEmbedder()
         assert embedder.base_url == "http://localhost:11434"
+
+    @pytest.mark.asyncio
+    async def test_timeout_raises_embedding_error(self):
+        """Ollama timeout is wrapped as EmbeddingError, not raw TimeoutException."""
+        embedder = OllamaEmbedder()
+        with patch.object(
+            embedder._client,
+            "post",
+            AsyncMock(side_effect=httpx.ReadTimeout("timed out")),
+        ):
+            with pytest.raises(EmbeddingError, match="timed out"):
+                await embedder.embed("test")
