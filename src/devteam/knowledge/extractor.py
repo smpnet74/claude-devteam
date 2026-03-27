@@ -11,7 +11,6 @@ from pydantic import BaseModel
 from devteam.knowledge.boundaries import (
     SharingScope,
     SecretDetectedError,
-    determine_sharing_scope,
     scan_for_secrets,
 )
 from devteam.knowledge.embeddings import OllamaEmbedder
@@ -100,14 +99,12 @@ class KnowledgeExtractor:
                 continue
 
             # Step 2: Use the scope from the extraction result as authoritative.
-            # The agent assigned "process" or "project"; fall back to tag-based
-            # heuristic only when scope is somehow missing.
+            # scope is Literal["process", "project"], so both branches are exhaustive.
             if entry.scope == "process":
                 sharing = SharingScope.SHARED
-            elif entry.scope == "project":
-                sharing = SharingScope.PROJECT
             else:
-                sharing = determine_sharing_scope(entry.tags, entry.content)
+                assert entry.scope == "project", f"Unexpected scope: {entry.scope!r}"
+                sharing = SharingScope.PROJECT
 
             # Step 3: Generate embedding
             try:

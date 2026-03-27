@@ -38,33 +38,34 @@ class MemoryIndexBuilder:
     def __init__(self, store: KnowledgeStore) -> None:
         self.store = store
 
-    async def build(self, role: str, project: str) -> str:
-        """Build a memory index scoped to the given role and project.
+    async def build(self, project: str) -> str:
+        """Build a memory index for the given project.
+
+        Role-scoped indexing is deferred; will be added when role-based
+        filtering is implemented in the store layer.
 
         Args:
-            role: Agent role (e.g., "backend_engineer").
             project: Current project name.
 
         Returns:
             Formatted markdown string suitable for agent context injection.
             Stays compact (~30-50 lines) regardless of knowledge base size.
         """
-        entries = await self._fetch_relevant_entries(role, project)
+        entries = await self._fetch_relevant_entries(project)
 
         if not entries:
             return INDEX_EMPTY
 
-        sections = self._group_entries(entries, role, project)
+        sections = self._group_entries(entries, project)
         return self._format_index(sections)
 
-    async def _fetch_relevant_entries(self, role: str, project: str) -> list[dict[str, Any]]:
-        """Fetch entries visible to this role/project combination."""
+    async def _fetch_relevant_entries(self, project: str) -> list[dict[str, Any]]:
+        """Fetch entries visible to this project."""
         return await self.store.list_entries(project=project, limit=200)
 
     def _group_entries(
         self,
         entries: list[dict[str, Any]],
-        role: str,
         project: str,
     ) -> dict[str, list[dict[str, Any]]]:
         """Group entries into display sections."""

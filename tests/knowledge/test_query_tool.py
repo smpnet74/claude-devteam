@@ -71,8 +71,12 @@ class TestQueryKnowledgeTool:
     async def test_query_with_shared_scope(self, query_tool):
         result = await query_tool.query("deployment", scope="shared")
         assert isinstance(result, str)
-        # Should only contain shared entries
-        assert "Drizzle" not in result or "shared" in result.lower()
+        # If results were returned, they must be shared-scoped entries only
+        if "No relevant" not in result and "No sufficiently" not in result:
+            # Project-only content (Drizzle ORM) must NOT appear in shared scope
+            assert "Drizzle" not in result, "Shared scope should not return project-scoped entries"
+            # At least one shared entry should be present
+            assert "shared" in result.lower() or "Fly.io" in result or "CodeRabbit" in result
 
     async def test_query_with_project_scope(self, query_tool):
         result = await query_tool.query("ORM", scope="project")
@@ -94,9 +98,11 @@ class TestQueryKnowledgeTool:
         # If no results came back (SurrealDB mem:// KNN may vary), skip assertion
         if "No relevant" in result or "No sufficiently" in result:
             pytest.skip("SurrealDB in-memory KNN did not return results")
-        # Verify access count was incremented for returned results
-        rows = await populated_store.db.query("SELECT * FROM knowledge")
-        accessed = [r for r in (rows or []) if r.get("access_count", 0) > 0]
+        # Verify access count was incremented via the store abstraction
+        # (use vector_search which returns full rows including access_count)
+        embedding = [1.0] + [0.0] * 767
+        rows = await populated_store.vector_search(embedding=embedding, limit=10, sharing="shared")
+        accessed = [r for r in rows if r.get("access_count", 0) > 0]
         assert len(accessed) > 0, "Expected at least one entry with access_count > 0 after query"
 
     async def test_query_no_results(self, query_tool):

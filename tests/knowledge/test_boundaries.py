@@ -73,6 +73,11 @@ class TestSecretScanning:
         with pytest.raises(SecretDetectedError):
             scan_for_secrets("postgres://user:s3cret@localhost:5432/db")
 
+    def test_detects_connection_string_with_dollar_in_password(self):
+        """Connection string passwords containing $ must still be detected."""
+        with pytest.raises(SecretDetectedError):
+            scan_for_secrets("postgres://user:pa$$@localhost:5432/db")
+
     def test_allows_safe_content(self):
         # Should not raise
         scan_for_secrets("Use Drizzle ORM for database access")
@@ -101,7 +106,13 @@ class TestScopeFilter:
     def test_project_scope_includes_shared(self):
         f = apply_scope_filter("project", project="myapp", role=None)
         assert f["project"] == "myapp"
-        # project scope should also include shared entries
+        # project scope should also include shared entries -- the store layer
+        # handles this via (sharing="shared" OR project=$project) when project
+        # is set, so the filter must NOT restrict sharing to "project" only.
+        assert "sharing" not in f, (
+            "project scope filter must not set sharing; "
+            "the store includes shared entries automatically when project is set"
+        )
 
     def test_role_scope_filter(self):
         f = apply_scope_filter("my_role", project=None, role="backend_engineer")

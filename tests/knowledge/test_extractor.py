@@ -170,7 +170,7 @@ class TestKnowledgeExtractor:
                 content="Use shared CI templates across all repos",
                 summary="Shared CI templates",
                 tags=["project", "ci"],  # tags say "project"
-                scope="process",          # scope says "process" (-> shared)
+                scope="process",  # scope says "process" (-> shared)
             ),
         ]
         result = await extractor.persist_entries(

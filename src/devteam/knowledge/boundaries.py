@@ -50,7 +50,7 @@ SECRET_PATTERNS = [
     ),
     # Connection strings with embedded passwords
     (
-        re.compile(r"(?:postgres|mysql|mongodb|redis)://[^:]+:[^@$<{]+@"),
+        re.compile(r"(?:postgres|mysql|mongodb|redis)://[^:]+:[^@<{]+@"),
         "Connection string with password",
     ),
     # GitHub personal access tokens
@@ -96,9 +96,7 @@ def scan_for_secrets(content: str) -> None:
         if match:
             matched_text = match.group(0)
             # Skip placeholder patterns -- but not literal $ in passwords
-            if any(p in matched_text for p in ("${", "<")) or re.search(
-                r"\$[A-Z_]", matched_text
-            ):
+            if any(p in matched_text for p in ("${", "<")) or re.search(r"\$[A-Z_]", matched_text):
                 continue
             raise SecretDetectedError(
                 f"Potential {description} detected in knowledge content. "
