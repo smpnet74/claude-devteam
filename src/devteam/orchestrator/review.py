@@ -7,6 +7,7 @@ This module handles post-PR shared services review.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 
 from pydantic import ValidationError
@@ -16,6 +17,36 @@ from devteam.orchestrator.schemas import (
     ReviewResult,
     WorkType,
 )
+
+
+# ---------------------------------------------------------------------------
+# pr_context sanitization
+# ---------------------------------------------------------------------------
+
+# Maximum length for pr_context before truncation (characters).
+_MAX_PR_CONTEXT_LENGTH = 100_000
+
+# Regex for control characters, bidi overrides, and zero-width chars.
+# Covers: C0 controls (except \n \r \t), DEL, C1 controls (U+0080-U+009F),
+# zero-width / formatting chars (U+200B-U+200F), bidi overrides
+# (U+202A-U+202E, U+2066-U+2069), and BOM (U+FEFF).
+_CONTROL_CHAR_RE = re.compile(
+    r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f"
+    r"\u200b-\u200f\u202a-\u202e\u2066-\u2069\ufeff]"
+)
+
+
+def sanitize_pr_context(text: str, max_length: int = _MAX_PR_CONTEXT_LENGTH) -> str:
+    """Sanitize untrusted pr_context before interpolating into prompts.
+
+    - Strips control characters (C0/C1), bidi overrides, and zero-width chars.
+    - Preserves newline, carriage return, and tab.
+    - Truncates to *max_length* characters with a truncation notice.
+    """
+    cleaned = _CONTROL_CHAR_RE.sub("", text)
+    if len(cleaned) > max_length:
+        cleaned = cleaned[:max_length] + "\n\n[...truncated...]"
+    return cleaned
 
 
 @dataclass(frozen=True)
@@ -111,6 +142,9 @@ def execute_post_pr_review(
     Each gate is executed in sequence. If a required gate fails,
     the chain stops (caller decides whether to trigger revision).
     """
+    # Sanitize untrusted pr_context before embedding in prompts
+    pr_context = sanitize_pr_context(pr_context)
+
     chain = get_review_chain(work_type, assigned_to=assigned_to)
     gate_results: dict[str, ReviewResult] = {}
     failed_gates: list[str] = []

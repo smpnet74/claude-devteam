@@ -31,15 +31,26 @@ class InvalidTransitionError(Exception):
 
 JOB_TRANSITIONS: dict[JobStatus, set[JobStatus]] = {
     JobStatus.CREATED: {JobStatus.PLANNING, JobStatus.CANCELED},
-    JobStatus.PLANNING: {JobStatus.DECOMPOSING, JobStatus.FAILED, JobStatus.CANCELED},
+    JobStatus.PLANNING: {
+        JobStatus.DECOMPOSING,
+        JobStatus.EXECUTING,  # small fix skips decomposition
+        JobStatus.FAILED,
+        JobStatus.CANCELED,
+    },
     JobStatus.DECOMPOSING: {JobStatus.EXECUTING, JobStatus.FAILED, JobStatus.CANCELED},
     JobStatus.EXECUTING: {
         JobStatus.REVIEWING,
+        JobStatus.COMPLETED,  # research path has no post-PR review
         JobStatus.PAUSED_RATE_LIMIT,
         JobStatus.FAILED,
         JobStatus.CANCELED,
     },
-    JobStatus.REVIEWING: {JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.CANCELED},
+    JobStatus.REVIEWING: {
+        JobStatus.COMPLETED,
+        JobStatus.EXECUTING,  # revision requested after review
+        JobStatus.FAILED,
+        JobStatus.CANCELED,
+    },
     JobStatus.PAUSED_RATE_LIMIT: {JobStatus.EXECUTING, JobStatus.CANCELED},
     JobStatus.COMPLETED: set(),
     JobStatus.FAILED: {JobStatus.CANCELED},
