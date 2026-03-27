@@ -392,9 +392,11 @@ def categorize_coderabbit_comments(
 
     for comment in comments:
         author = comment.get("author", "")
-        # Handle author as string or dict
+        # Handle author as string, dict, or unexpected type
         if isinstance(author, dict):
             author = author.get("login", "")
+        elif not isinstance(author, str):
+            continue
         if "coderabbit" not in author.lower():
             continue
 

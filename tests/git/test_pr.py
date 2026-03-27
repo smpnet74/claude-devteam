@@ -248,10 +248,16 @@ class TestMergePR:
 
 class TestClosePR:
     def test_close_pr(self, tmp_path: Path):
-        """Closes a PR with a comment."""
+        """Closes a PR with a comment — verifies both comment and close calls."""
         with patch("devteam.git.pr.gh_run") as mock_gh:
             close_pr(tmp_path, 42, comment="Cancelled by operator")
-            assert mock_gh.call_count >= 1
+            assert mock_gh.call_count == 2  # comment + close
+            # First call posts the comment
+            comment_args = mock_gh.call_args_list[0]
+            assert "comment" in comment_args[0][0]
+            # Second call closes the PR
+            close_args = mock_gh.call_args_list[1]
+            assert "close" in close_args[0][0]
 
     def test_close_already_closed(self, tmp_path: Path):
         """Closing an already-closed PR is a no-op."""
