@@ -8,6 +8,8 @@ from typing import Any
 
 from surrealdb import AsyncSurreal, RecordID
 
+from devteam.knowledge.embeddings import EMBEDDING_DIMENSIONS
+
 logger = logging.getLogger(__name__)
 
 # Valid graph relation types between knowledge entries.
@@ -52,12 +54,30 @@ class KnowledgeStore:
     # Connection lifecycle
     # ------------------------------------------------------------------
 
-    async def connect(self) -> None:
-        """Connect to SurrealDB and initialize schema."""
+    async def connect(
+        self,
+        namespace: str = "devteam",
+        database: str = "knowledge",
+        username: str | None = None,
+        password: str | None = None,
+    ) -> None:
+        """Connect to SurrealDB and initialize schema.
+
+        Args:
+            namespace: SurrealDB namespace to use.
+            database: SurrealDB database to use.
+            username: Optional username for authentication (required for ws:// connections).
+            password: Optional password for authentication (required for ws:// connections).
+        """
         if self._connected:
             return
         await self.db.connect()
-        await self.db.use("devteam", "knowledge")
+
+        # Authenticate if credentials provided (required for ws:// connections)
+        if username and password:
+            await self.db.signin({"username": username, "password": password})
+
+        await self.db.use(namespace, database)
         await self._init_schema()
         self._connected = True
         logger.info("Knowledge store connected: %s", self.url)
@@ -96,6 +116,10 @@ class KnowledgeStore:
             raise ValueError(f"sharing must be 'shared' or 'project', got: {sharing!r}")
         if sharing == "project" and not project:
             raise ValueError("project must be set when sharing='project'")
+        if embedding and len(embedding) != EMBEDDING_DIMENSIONS:
+            raise ValueError(
+                f"Embedding must be {EMBEDDING_DIMENSIONS} dimensions, got {len(embedding)}"
+            )
 
         record = await self.db.create(
             "knowledge",
@@ -300,6 +324,9 @@ class KnowledgeStore:
     ) -> list[dict[str, Any]]:
         """Search knowledge entries by vector similarity with filters.
 
+        Uses SurrealDB's native ``<|K,EF|>`` KNN operator for HNSW index
+        utilization instead of a full table scan with ORDER BY.
+
         Args:
             embedding: Query embedding vector (768 dimensions).
             limit: Maximum number of results.
@@ -311,8 +338,13 @@ class KnowledgeStore:
         Returns:
             List of matching entries sorted by relevance (descending).
         """
+        if len(embedding) != EMBEDDING_DIMENSIONS:
+            raise ValueError(
+                f"Search vector must be {EMBEDDING_DIMENSIONS} dimensions, got {len(embedding)}"
+            )
+
         filters: list[str] = []
-        params: dict[str, Any] = {"vec": embedding, "limit": limit}
+        params: dict[str, Any] = {"vec": embedding}
 
         if sharing:
             filters.append("sharing = $sharing")
@@ -329,8 +361,30 @@ class KnowledgeStore:
                 params[param_name] = tag
             filters.append(f"({' OR '.join(tag_parts)})")
 
-        where_clause = " AND ".join(filters) if filters else ""
-        where_sql = f"WHERE {where_clause}" if where_clause else ""
+        # Exclude superseded entries in the WHERE clause rather than
+        # post-filtering, so we always get the requested number of results
+        # (when available).
+        # NOTE: An inline subquery (SELECT VALUE out FROM supersedes) inside
+        # a WHERE clause breaks the KNN operator in SurrealDB, so we
+        # pre-fetch superseded IDs and pass them as a parameter instead.
+        knn_k = limit
+        if exclude_superseded:
+            sup_ids = await self.db.query("SELECT VALUE out FROM supersedes")
+            params["sup"] = sup_ids if sup_ids else []
+            filters.append("id NOT IN $sup")
+            # Over-fetch from the KNN index to compensate for rows that will
+            # be removed by the NOT IN filter, then trim to the requested
+            # limit after scoring.
+            knn_k = limit + len(params["sup"])
+
+        # KNN operator: <|K,EF|> where K = number of neighbours, EF = search
+        # depth (higher EF = more accurate but slower).  The HNSW index defined
+        # on the embedding field is utilised automatically.
+        ef = max(knn_k * 8, 40)  # reasonable default for search depth
+        filters.append(f"embedding <|{knn_k},{ef}|> $vec")
+
+        where_clause = " AND ".join(filters)
+        where_sql = f"WHERE {where_clause}"
 
         query = f"""
             SELECT *,
@@ -338,18 +392,12 @@ class KnowledgeStore:
             FROM knowledge
             {where_sql}
             ORDER BY relevance DESC
-            LIMIT $limit
+            LIMIT {limit}
         """
 
         rows = await self.db.query(query, params)
         if not rows:
             return []
-
-        # Post-process: exclude superseded entries
-        if exclude_superseded:
-            superseded_ids = await self.get_superseded_ids()
-            if superseded_ids:
-                rows = [r for r in rows if str(r.get("id", "")) not in superseded_ids]
 
         return [self._normalize_row(r) for r in rows]
 

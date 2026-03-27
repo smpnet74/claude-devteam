@@ -2,7 +2,9 @@
 
 import pytest
 import pytest_asyncio
+from unittest.mock import AsyncMock
 
+from devteam.knowledge.embeddings import EMBEDDING_DIMENSIONS
 from devteam.knowledge.store import KnowledgeStore, VALID_RELATIONS
 
 
@@ -39,6 +41,40 @@ class TestKnowledgeStoreConnection:
         await s.connect()  # should not raise
         assert s.is_connected
         await s.close()
+
+    async def test_connect_calls_signin_when_credentials_provided(self):
+        """signin should be called when username and password are provided."""
+        s = KnowledgeStore("ws://localhost:8000")
+        mock_db = AsyncMock()
+        s.db = mock_db
+
+        await s.connect(username="root", password="root")
+
+        mock_db.connect.assert_awaited_once()
+        mock_db.signin.assert_awaited_once_with({"username": "root", "password": "root"})
+        mock_db.use.assert_awaited_once_with("devteam", "knowledge")
+
+    async def test_connect_skips_signin_without_credentials(self):
+        """signin should NOT be called when no credentials are provided (mem:// mode)."""
+        s = KnowledgeStore("mem://")
+        mock_db = AsyncMock()
+        s.db = mock_db
+
+        await s.connect()
+
+        mock_db.connect.assert_awaited_once()
+        mock_db.signin.assert_not_awaited()
+        mock_db.use.assert_awaited_once_with("devteam", "knowledge")
+
+    async def test_connect_with_custom_namespace_and_database(self):
+        """Custom namespace and database should be passed to use()."""
+        s = KnowledgeStore("mem://")
+        mock_db = AsyncMock()
+        s.db = mock_db
+
+        await s.connect(namespace="custom_ns", database="custom_db")
+
+        mock_db.use.assert_awaited_once_with("custom_ns", "custom_db")
 
 
 @pytest.mark.asyncio
@@ -86,6 +122,28 @@ class TestKnowledgeStoreCRUD:
                 sharing="project",
                 project=None,
                 embedding=[0.0] * 768,
+            )
+
+    async def test_create_entry_validates_embedding_too_short(self, store: KnowledgeStore):
+        with pytest.raises(ValueError, match=f"Embedding must be {EMBEDDING_DIMENSIONS} dimensions, got 10"):
+            await store.create_entry(
+                content="test",
+                summary="test",
+                tags=[],
+                sharing="shared",
+                project=None,
+                embedding=[0.0] * 10,
+            )
+
+    async def test_create_entry_validates_embedding_too_long(self, store: KnowledgeStore):
+        with pytest.raises(ValueError, match=f"Embedding must be {EMBEDDING_DIMENSIONS} dimensions, got 1024"):
+            await store.create_entry(
+                content="test",
+                summary="test",
+                tags=[],
+                sharing="shared",
+                project=None,
+                embedding=[0.0] * 1024,
             )
 
     async def test_get_entry(self, store: KnowledgeStore):

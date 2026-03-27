@@ -3,6 +3,7 @@
 import pytest
 import pytest_asyncio
 
+from devteam.knowledge.embeddings import EMBEDDING_DIMENSIONS
 from devteam.knowledge.store import KnowledgeStore
 
 
@@ -121,6 +122,51 @@ class TestVectorSearch:
         results = await s.vector_search([0.1] * 768, limit=5)
         assert results == []
         await s.close()
+
+    async def test_search_validates_embedding_dimensions_too_short(self, populated_store: KnowledgeStore):
+        with pytest.raises(ValueError, match=f"Search vector must be {EMBEDDING_DIMENSIONS} dimensions, got 10"):
+            await populated_store.vector_search([0.1] * 10, limit=5)
+
+    async def test_search_validates_embedding_dimensions_too_long(self, populated_store: KnowledgeStore):
+        with pytest.raises(ValueError, match=f"Search vector must be {EMBEDDING_DIMENSIONS} dimensions, got 1024"):
+            await populated_store.vector_search([0.1] * 1024, limit=5)
+
+    async def test_superseded_exclusion_does_not_reduce_result_count(self, populated_store: KnowledgeStore):
+        """When top-N includes superseded entries, the result set should still
+        contain the requested number of non-superseded entries (when available).
+
+        This verifies superseded exclusion happens in the WHERE clause (pre-LIMIT)
+        rather than as post-filtering.
+        """
+        # Create 3 entries with very similar embeddings in the same cluster
+        base_emb = [0.0, 0.0, 0.0, 1.0] + [0.0] * 764
+        ids = []
+        for i in range(3):
+            eid = await populated_store.create_entry(
+                content=f"Supersede test entry {i}",
+                summary=f"supersede-test-{i}",
+                tags=["test"],
+                sharing="shared",
+                project=None,
+                embedding=base_emb,
+            )
+            ids.append(eid)
+
+        # Supersede the first entry (ids[0]) with the second (ids[1])
+        await populated_store.add_relationship(ids[1], "supersedes", ids[0])
+
+        # Search for limit=2 with that cluster's embedding
+        results = await populated_store.vector_search(
+            base_emb, limit=2, exclude_superseded=True, tags=["test"],
+        )
+
+        # The superseded entry should be excluded
+        result_ids = [r["id"] for r in results]
+        assert ids[0] not in result_ids
+
+        # We should still get 2 results (ids[1] and ids[2]) since
+        # exclusion happens before the limit
+        assert len(results) == 2
 
 
 @pytest.mark.asyncio
