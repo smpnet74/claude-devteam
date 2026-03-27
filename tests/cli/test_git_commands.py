@@ -122,3 +122,47 @@ class TestHandbackCommand:
             result = runner.invoke(git_app, ["handback", "W-1/T-3"])
             assert result.exit_code == 1
             assert "uncommitted" in result.output.lower()
+
+    def test_handback_scope_warning(self):
+        """Handback warns about out-of-scope file changes."""
+        with patch("devteam.cli.commands.git_commands.send_handback_request") as mock:
+            mock.return_value = {
+                "success": False,
+                "error": "Files outside expected scope",
+                "validation": {"clean": True, "scope_ok": False},
+            }
+            result = runner.invoke(git_app, ["handback", "W-1/T-3"])
+            assert result.exit_code == 1
+            assert "scope" in result.output.lower()
+
+
+class TestNotImplementedHandling:
+    """All git commands handle NotImplementedError gracefully."""
+
+    def test_cancel_not_implemented(self):
+        with patch("devteam.cli.commands.git_commands.send_cancel_request") as mock:
+            mock.side_effect = NotImplementedError()
+            result = runner.invoke(git_app, ["cancel", "W-1"])
+            assert result.exit_code == 1
+            assert "not yet implemented" in result.output.lower()
+
+    def test_merge_not_implemented(self):
+        with patch("devteam.cli.commands.git_commands.send_merge_request") as mock:
+            mock.side_effect = NotImplementedError()
+            result = runner.invoke(git_app, ["merge", "W-1/PR-1"])
+            assert result.exit_code == 1
+            assert "not yet implemented" in result.output.lower()
+
+    def test_takeover_not_implemented(self):
+        with patch("devteam.cli.commands.git_commands.send_takeover_request") as mock:
+            mock.side_effect = NotImplementedError()
+            result = runner.invoke(git_app, ["takeover", "W-1/T-1"])
+            assert result.exit_code == 1
+            assert "not yet implemented" in result.output.lower()
+
+    def test_handback_not_implemented(self):
+        with patch("devteam.cli.commands.git_commands.send_handback_request") as mock:
+            mock.side_effect = NotImplementedError()
+            result = runner.invoke(git_app, ["handback", "W-1/T-1"])
+            assert result.exit_code == 1
+            assert "not yet implemented" in result.output.lower()
