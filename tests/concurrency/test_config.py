@@ -34,3 +34,24 @@ class TestConcurrencyConfig:
         config = {"rate_limit": {"default_backoff_seconds": 0}}
         with pytest.raises(ValueError, match="must be a positive integer"):
             load_concurrency_config(config)
+
+    def test_boolean_true_rejected_for_max_concurrent(self):
+        """bool is a subclass of int; True/False must be rejected."""
+        config = {"general": {"max_concurrent_agents": True}}
+        with pytest.raises(ValueError, match="must be a positive integer"):
+            load_concurrency_config(config)
+
+    def test_boolean_false_rejected_for_max_concurrent(self):
+        config = {"general": {"max_concurrent_agents": False}}
+        with pytest.raises(ValueError, match="must be a positive integer"):
+            load_concurrency_config(config)
+
+    def test_boolean_true_rejected_for_backoff(self):
+        config = {"rate_limit": {"default_backoff_seconds": True}}
+        with pytest.raises(ValueError, match="must be a positive integer"):
+            load_concurrency_config(config)
+
+    def test_boolean_false_rejected_for_backoff(self):
+        config = {"rate_limit": {"default_backoff_seconds": False}}
+        with pytest.raises(ValueError, match="must be a positive integer"):
+            load_concurrency_config(config)

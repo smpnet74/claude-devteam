@@ -21,6 +21,9 @@ from devteam.concurrency.rate_limit import (
     check_pause_before_invoke,
     handle_rate_limit_error,
     clear_global_pause,
+    get_global_pause,
+    set_global_pause,
+    DEFAULT_BACKOFF_SECONDS,
 )
 
 
@@ -41,6 +44,7 @@ def rate_limit_aware_invoke(
     role: str,
     task_id: str,
     context: str,
+    default_backoff: int = DEFAULT_BACKOFF_SECONDS,
     sleep_fn: Callable[[float], None] | None = None,
 ) -> Any:
     """Invoke an agent with rate limit awareness.
@@ -55,6 +59,7 @@ def rate_limit_aware_invoke(
         role: Agent role being invoked.
         task_id: Task identifier for logging.
         context: The prompt/context to send to the agent.
+        default_backoff: Fallback backoff seconds from config. Defaults to 1800.
         sleep_fn: Injectable sleep function. Defaults to time.sleep.
                   In production, this is DBOS.sleep() for durable sleep.
 
@@ -75,9 +80,21 @@ def rate_limit_aware_invoke(
         result = invoke_fn(role=role, task_id=task_id, context=context)
         return result
     except RateLimitError as e:
-        # Step 3: Set global pause, sleep, clear, retry
-        seconds = handle_rate_limit_error(db, e)
-        sleep_fn(seconds)
-        clear_global_pause(db)
+        # Step 3: Set global pause, sleep, conditionally clear, retry
+        backoff_seconds = handle_rate_limit_error(
+            db, e, default_backoff=default_backoff,
+        )
+        resume_at = set_global_pause(
+            db, seconds=backoff_seconds, reason="rate_limit",
+        )
+        sleep_fn(backoff_seconds)
+        # Only clear if our pause is still the active one
+        current = get_global_pause(db)
+        if (
+            current is not None
+            and current.resume_at is not None
+            and current.resume_at <= resume_at
+        ):
+            clear_global_pause(db)
         result = invoke_fn(role=role, task_id=task_id, context=context)
         return result
