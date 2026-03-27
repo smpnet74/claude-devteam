@@ -307,6 +307,33 @@ class TestAllGreenBlocking:
             assert feedback.all_green is False
 
 
+class TestCheckPRStatusApiErrors:
+    def test_review_data_fetch_failure(self, tmp_path: Path):
+        """Review data fetch failure is tracked in api_errors."""
+        from devteam.git.helpers import GhError
+
+        with patch("devteam.git.pr.gh_run") as mock_gh:
+            mock_gh.side_effect = [
+                [{"name": "ci", "state": "completed", "bucket": "pass"}],
+                GhError(["pr", "view"], 1, "network timeout"),
+            ]
+            feedback = check_pr_status(tmp_path, 42)
+            assert len(feedback.api_errors) == 1
+            assert "network timeout" in feedback.api_errors[0]
+            assert feedback.all_green is False
+
+    def test_unknown_bucket_tracked(self, tmp_path: Path):
+        """Unknown bucket values are treated as pending and tracked."""
+        with patch("devteam.git.pr.gh_run") as mock_gh:
+            mock_gh.side_effect = [
+                [{"name": "ci", "state": "completed", "bucket": "new_unknown_value"}],
+                {"reviews": [], "comments": [], "reviewDecision": ""},
+            ]
+            feedback = check_pr_status(tmp_path, 42)
+            assert feedback.check_status == PRCheckStatus.PENDING
+            assert any("Unknown check bucket" in e for e in feedback.api_errors)
+
+
 class TestCodeRabbitCategorization:
     def test_categorize_comments(self):
         """CodeRabbit comments are sorted by severity."""

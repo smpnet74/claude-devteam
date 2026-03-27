@@ -259,15 +259,21 @@ def check_pr_status(cwd: Path, pr_number: int) -> PRFeedback:
 
         for check in checks:
             bucket = check.get("bucket", "")
+            name = check.get("name", "(unknown)")
             if bucket == "fail" or bucket == "cancel":
                 has_failed = True
-                failed_checks.append(check["name"])
+                failed_checks.append(name)
             elif bucket == "pending":
                 has_pending = True
             elif bucket == "skipping":
                 # Skipped checks are non-blocking (e.g., path-filtered CI)
                 pass
-            # bucket == "pass" is the implicit success case
+            elif bucket == "pass":
+                pass
+            else:
+                # Unknown bucket value — treat as pending to be safe
+                has_pending = True
+                api_errors.append(f"Unknown check bucket '{bucket}' for '{name}'")
 
         ci_complete = not has_pending
 
