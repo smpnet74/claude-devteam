@@ -69,6 +69,9 @@ class OllamaEmbedder:
         """
         if not texts:
             raise ValueError("Cannot embed empty text list")
+        for i, text in enumerate(texts):
+            if not text or not text.strip():
+                raise ValueError(f"Cannot embed empty/whitespace text at index {i}")
         return await self._call_ollama(texts)
 
     async def is_available(self) -> bool:

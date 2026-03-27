@@ -397,7 +397,16 @@ class TestUpdateFieldAllowlist:
             await store.update_entry(entry_id, not_a_real_field="evil")
 
     async def test_updatable_fields_constant(self):
-        assert _UPDATABLE_FIELDS == frozenset({
-            "content", "summary", "tags", "sharing", "project",
-            "embedding", "verified", "source", "access_count",
-        })
+        assert _UPDATABLE_FIELDS == frozenset(
+            {
+                "content",
+                "summary",
+                "tags",
+                "sharing",
+                "project",
+                "embedding",
+                "verified",
+                "source",
+                "access_count",
+            }
+        )

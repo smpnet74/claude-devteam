@@ -33,10 +33,19 @@ SCHEMA_STATEMENTS = [
 ]
 
 
-_UPDATABLE_FIELDS = frozenset({
-    "content", "summary", "tags", "sharing", "project",
-    "embedding", "verified", "source", "access_count",
-})
+_UPDATABLE_FIELDS = frozenset(
+    {
+        "content",
+        "summary",
+        "tags",
+        "sharing",
+        "project",
+        "embedding",
+        "verified",
+        "source",
+        "access_count",
+    }
+)
 
 
 class KnowledgeStore:
@@ -279,6 +288,10 @@ class KnowledgeStore:
             List of dicts with ``"id"`` of the related record.
         """
         rid = self._parse_record_id(entry_id)
+        if direction not in ("in", "out"):
+            raise ValueError(f"direction must be 'in' or 'out', got {direction!r}")
+        if relation and relation not in VALID_RELATIONS:
+            raise ValueError(f"Unknown relation type: {relation!r}")
         key = "items"
 
         if relation:
