@@ -88,6 +88,17 @@ class TestTakeoverCommand:
             assert result.exit_code == 0
             assert "devteam git handback W-1/T-3" in result.output
 
+    def test_takeover_failure(self):
+        """devteam takeover shows error on failure."""
+        with patch("devteam.cli.commands.git_commands.send_takeover_request") as mock:
+            mock.return_value = {
+                "success": False,
+                "error": "Task W-1/T-3 is not in a pauseable state",
+            }
+            result = runner.invoke(git_app, ["takeover", "W-1/T-3"])
+            assert result.exit_code == 1
+            assert "not in a pauseable state" in result.output.lower()
+
 
 class TestHandbackCommand:
     def test_handback_validates(self):

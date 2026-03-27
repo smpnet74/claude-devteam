@@ -209,23 +209,31 @@ def handle_start(
 
     # Detect repo and check for same-repo concurrency conflicts
     repo = _detect_repo(cwd)
-    if repo:
-        active_jobs = [
-            {"job_id": j.id, "repo": j.repo}
-            for j in store.list_jobs()
-            if j.repo and j.status not in TERMINAL_STATES
-        ]
-        conflict = check_same_repo_concurrency(repo, active_jobs)
-        if conflict:
-            raise ValueError(
-                f"Repo {repo} already has an active job: {conflict['job_id']}. "
-                "Cancel or complete it before starting another."
-            )
+    if not repo:
+        import logging
 
-    job_id = store.next_id()
-    job = create_job(job_id, title, intake)
-    job.repo = repo
-    store.save(job)
+        logging.getLogger(__name__).warning(
+            "Could not detect repo identity — same-repo concurrency check skipped"
+        )
+    # Atomic check-and-save under the store lock to prevent race conditions
+    with store._lock:
+        if repo:
+            active_jobs = [
+                {"job_id": j.id, "repo": j.repo}
+                for j in store.list_jobs()
+                if j.repo and j.status not in TERMINAL_STATES
+            ]
+            conflict = check_same_repo_concurrency(repo, active_jobs)
+            if conflict:
+                raise ValueError(
+                    f"Repo {repo} already has an active job: {conflict['job_id']}. "
+                    "Cancel or complete it before starting another."
+                )
+
+        job_id = store.next_id()
+        job = create_job(job_id, title, intake)
+        job.repo = repo
+        store.save(job)
     return job
 
 
