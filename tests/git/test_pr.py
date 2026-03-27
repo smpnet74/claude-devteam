@@ -19,14 +19,15 @@ from devteam.git.pr import (
 
 class TestCreatePR:
     def test_create_pr_basic(self, tmp_path: Path):
-        """Creates a PR via gh CLI."""
-        with patch("devteam.git.pr.find_existing_pr", return_value=None):
+        """Creates a PR via gh CLI -- gh pr create returns URL, not JSON."""
+        with patch("devteam.git.pr.find_existing_pr") as mock_find:
+            # First call (idempotency check) returns None, second (post-create fetch) returns info
+            mock_find.side_effect = [
+                None,
+                PRInfo(number=42, url="https://github.com/org/repo/pull/42", branch="feat/login"),
+            ]
             with patch("devteam.git.pr.gh_run") as mock_gh:
-                mock_gh.return_value = {
-                    "number": 42,
-                    "url": "https://github.com/org/repo/pull/42",
-                    "headRefName": "feat/login",
-                }
+                mock_gh.return_value = "https://github.com/org/repo/pull/42"
                 info = create_pr(
                     cwd=tmp_path,
                     title="Add login flow",
@@ -36,6 +37,26 @@ class TestCreatePR:
                 )
                 assert info.number == 42
                 assert info.url == "https://github.com/org/repo/pull/42"
+                # Should NOT pass parse_json=True
+                call_kwargs = mock_gh.call_args[1] if mock_gh.call_args[1] else {}
+                assert call_kwargs.get("parse_json") is not True
+
+    def test_create_pr_fallback_when_fetch_fails(self, tmp_path: Path):
+        """When post-create fetch returns None, falls back to URL-parsed PRInfo."""
+        with patch("devteam.git.pr.find_existing_pr", return_value=None):
+            with patch("devteam.git.pr.gh_run") as mock_gh:
+                mock_gh.return_value = "https://github.com/org/repo/pull/42"
+                info = create_pr(
+                    cwd=tmp_path,
+                    title="Add login flow",
+                    body="Implements user authentication",
+                    branch="feat/login",
+                    base="main",
+                )
+                assert info.number == 42
+                assert info.url == "https://github.com/org/repo/pull/42"
+                assert info.branch == "feat/login"
+                assert info.state == "OPEN"
 
     def test_create_pr_idempotent(self, tmp_path: Path):
         """If a PR already exists for the branch, returns it."""
@@ -58,11 +79,7 @@ class TestCreatePR:
         """Creates a PR targeting upstream repo from a fork."""
         with patch("devteam.git.pr.find_existing_pr", return_value=None):
             with patch("devteam.git.pr.gh_run") as mock_gh:
-                mock_gh.return_value = {
-                    "number": 99,
-                    "url": "https://github.com/org/repo/pull/99",
-                    "headRefName": "feat/fix",
-                }
+                mock_gh.return_value = "https://github.com/org/repo/pull/99"
                 _info = create_pr(
                     cwd=tmp_path,
                     title="Fix bug",
@@ -104,11 +121,11 @@ class TestCheckPRStatus:
     def test_all_green(self, tmp_path: Path):
         """All CI checks pass, no review comments."""
         with patch("devteam.git.pr.gh_run") as mock_gh:
-            # First call: checks, second call: reviews
+            # First call: checks (using bucket field), second call: reviews
             mock_gh.side_effect = [
                 [
-                    {"name": "ci", "state": "completed", "conclusion": "success"},
-                    {"name": "lint", "state": "completed", "conclusion": "success"},
+                    {"name": "ci", "state": "completed", "bucket": "pass"},
+                    {"name": "lint", "state": "completed", "bucket": "pass"},
                 ],
                 {
                     "reviews": [],
@@ -120,13 +137,14 @@ class TestCheckPRStatus:
             assert feedback.ci_complete is True
             assert feedback.all_green is True
             assert feedback.check_status == PRCheckStatus.ALL_PASSED
+            assert not feedback.api_errors
 
     def test_ci_pending(self, tmp_path: Path):
         """CI checks still running."""
         with patch("devteam.git.pr.gh_run") as mock_gh:
             mock_gh.side_effect = [
                 [
-                    {"name": "ci", "state": "in_progress", "conclusion": None},
+                    {"name": "ci", "state": "in_progress", "bucket": "pending"},
                 ],
                 {"reviews": [], "comments": [], "reviewDecision": ""},
             ]
@@ -139,13 +157,27 @@ class TestCheckPRStatus:
         with patch("devteam.git.pr.gh_run") as mock_gh:
             mock_gh.side_effect = [
                 [
-                    {"name": "ci", "state": "completed", "conclusion": "failure"},
+                    {"name": "ci", "state": "completed", "bucket": "fail"},
                 ],
                 {"reviews": [], "comments": [], "reviewDecision": ""},
             ]
             feedback = check_pr_status(tmp_path, 42)
             assert feedback.ci_complete is True
             assert feedback.check_status == PRCheckStatus.SOME_FAILED
+            assert "ci" in feedback.failed_checks
+
+    def test_ci_cancelled(self, tmp_path: Path):
+        """Cancelled CI check is treated as failed."""
+        with patch("devteam.git.pr.gh_run") as mock_gh:
+            mock_gh.side_effect = [
+                [
+                    {"name": "ci", "state": "completed", "bucket": "cancel"},
+                ],
+                {"reviews": [], "comments": [], "reviewDecision": ""},
+            ]
+            feedback = check_pr_status(tmp_path, 42)
+            assert feedback.check_status == PRCheckStatus.SOME_FAILED
+            assert "ci" in feedback.failed_checks
 
     def test_no_checks(self, tmp_path: Path):
         """Repo with no CI checks configured."""
@@ -157,6 +189,20 @@ class TestCheckPRStatus:
             feedback = check_pr_status(tmp_path, 42)
             assert feedback.ci_complete is True
             assert feedback.check_status == PRCheckStatus.NO_CHECKS
+
+    def test_api_error_tracked(self, tmp_path: Path):
+        """API failures are tracked in api_errors and block all_green."""
+        from devteam.git.helpers import GhError
+
+        with patch("devteam.git.pr.gh_run") as mock_gh:
+            mock_gh.side_effect = [
+                GhError(["pr", "checks"], 1, "network error"),
+                {"reviews": [], "comments": [], "reviewDecision": "APPROVED"},
+            ]
+            feedback = check_pr_status(tmp_path, 42)
+            assert len(feedback.api_errors) == 1
+            assert "Failed to fetch CI checks" in feedback.api_errors[0]
+            assert feedback.all_green is False
 
 
 class TestMergePR:
@@ -213,7 +259,7 @@ class TestAllGreenBlocking:
         """all_green is False when CodeRabbit reports errors, even if CI passes."""
         with patch("devteam.git.pr.gh_run") as mock_gh:
             mock_gh.side_effect = [
-                [{"name": "ci", "state": "completed", "conclusion": "success"}],
+                [{"name": "ci", "state": "completed", "bucket": "pass"}],
                 {
                     "reviews": [],
                     "comments": [{"body": "[error] SQL injection", "author": "coderabbitai[bot]"}],
@@ -228,7 +274,7 @@ class TestAllGreenBlocking:
         """all_green is False when review decision is CHANGES_REQUESTED."""
         with patch("devteam.git.pr.gh_run") as mock_gh:
             mock_gh.side_effect = [
-                [{"name": "ci", "state": "completed", "conclusion": "success"}],
+                [{"name": "ci", "state": "completed", "bucket": "pass"}],
                 {
                     "reviews": [],
                     "comments": [],

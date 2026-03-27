@@ -23,6 +23,9 @@ class PRInfo:
     number: int
     url: str
     branch: str
+    title: str = ""
+    state: str = ""
+    base_branch: str = ""
 
 
 class PRCheckStatus(Enum):
@@ -64,6 +67,7 @@ class PRFeedback:
     review_comments: list[dict[str, Any]] = field(default_factory=list)
     review_decision: str = ""
     coderabbit_comments: CategorizedComments = field(default_factory=CategorizedComments)
+    api_errors: list[str] = field(default_factory=list)
 
 
 def find_existing_pr(
@@ -155,11 +159,26 @@ def create_pr(
     if upstream_repo:
         args.extend(["--repo", upstream_repo])
 
-    result = cast(dict[str, Any], gh_run(args, cwd=cwd, parse_json=True))
+    # gh pr create prints the PR URL on stdout (not JSON)
+    url = gh_run(args, cwd=cwd)
+    assert isinstance(url, str)
+    url = url.strip()
+
+    # Extract PR number from URL (e.g., https://github.com/owner/repo/pull/42)
+    pr_number = int(url.rstrip("/").split("/")[-1])
+
+    # Fetch full PR info for consistency
+    fetched = find_existing_pr(cwd, branch, repo=upstream_repo)
+    if fetched is not None:
+        return fetched
+
     return PRInfo(
-        number=result["number"],
-        url=result["url"],
-        branch=result["headRefName"],
+        number=pr_number,
+        url=url,
+        branch=branch,
+        title=title,
+        state="OPEN",
+        base_branch=base,
     )
 
 
@@ -177,18 +196,22 @@ def check_pr_status(cwd: Path, pr_number: int) -> PRFeedback:
         PRFeedback with CI status, review comments, and categorized
         CodeRabbit comments.
     """
+    api_errors: list[str] = []
+
     # Get CI check status
+    # gh pr checks supports fields: name, state, bucket, workflow (not conclusion)
     try:
         checks: list[dict[str, Any]] = cast(
             list[dict[str, Any]],
             gh_run(
-                ["pr", "checks", str(pr_number), "--json", "name,state,conclusion"],
+                ["pr", "checks", str(pr_number), "--json", "name,state,bucket"],
                 cwd=cwd,
                 parse_json=True,
             ),
         )
-    except GhError:
+    except GhError as e:
         checks = []
+        api_errors.append(f"Failed to fetch CI checks: {e.stderr}")
 
     # Get review status
     try:
@@ -206,24 +229,35 @@ def check_pr_status(cwd: Path, pr_number: int) -> PRFeedback:
                 parse_json=True,
             ),
         )
-    except GhError:
+    except GhError as e:
         review_data = {"reviews": [], "comments": [], "reviewDecision": ""}
+        api_errors.append(f"Failed to fetch review data: {e.stderr}")
 
-    # Analyze CI checks
+    # Analyze CI checks using bucket values:
+    # "pass" -> passed, "fail" -> failed, "pending" -> pending, "cancel" -> failed
     if not checks:
         ci_complete = True
         check_status = PRCheckStatus.NO_CHECKS
         failed_checks: list[str] = []
     else:
-        all_completed = all(c.get("state") == "completed" for c in checks)
-        ci_complete = all_completed
-        failed = [c["name"] for c in checks if c.get("conclusion") == "failure"]
-        failed_checks = failed
+        has_pending = False
+        has_failed = False
+        failed_checks = []
 
-        if not all_completed:
-            check_status = PRCheckStatus.PENDING
-        elif failed:
+        for check in checks:
+            bucket = check.get("bucket", "")
+            if bucket == "fail" or bucket == "cancel":
+                has_failed = True
+                failed_checks.append(check["name"])
+            elif bucket == "pending":
+                has_pending = True
+
+        ci_complete = not has_pending
+
+        if has_failed:
             check_status = PRCheckStatus.SOME_FAILED
+        elif has_pending:
+            check_status = PRCheckStatus.PENDING
         else:
             check_status = PRCheckStatus.ALL_PASSED
 
@@ -238,6 +272,7 @@ def check_pr_status(cwd: Path, pr_number: int) -> PRFeedback:
         check_status in (PRCheckStatus.ALL_PASSED, PRCheckStatus.NO_CHECKS)
         and not coderabbit.errors
         and review_decision not in ("CHANGES_REQUESTED", "REVIEW_REQUIRED")
+        and not api_errors
     )
 
     return PRFeedback(
@@ -248,6 +283,7 @@ def check_pr_status(cwd: Path, pr_number: int) -> PRFeedback:
         review_comments=review_data.get("reviews", []),
         review_decision=review_decision,
         coderabbit_comments=coderabbit,
+        api_errors=api_errors,
     )
 
 

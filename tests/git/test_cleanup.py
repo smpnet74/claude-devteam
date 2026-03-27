@@ -77,8 +77,8 @@ class TestCleanupOnCancel:
                 assert not wt1.path.exists()
                 assert not wt2.path.exists()
 
-    def test_cancel_preserves_merged_prs(self, git_repo: Path):
-        """Already-merged PRs are preserved on cancel."""
+    def test_cancel_preserves_merged_prs_but_cleans_local(self, git_repo: Path):
+        """Already-merged PRs are preserved but local artifacts are cleaned."""
         pr_branches = [
             {
                 "branch": "feat/merged",
@@ -95,9 +95,9 @@ class TestCleanupOnCancel:
         ]
 
         with patch("devteam.git.cleanup.close_pr") as mock_close:
-            with patch("devteam.git.cleanup.delete_remote_branch"):
+            with patch("devteam.git.cleanup.delete_remote_branch") as mock_remote:
                 with patch("devteam.git.cleanup.remove_worktree"):
-                    with patch("devteam.git.cleanup.delete_local_branch"):
+                    with patch("devteam.git.cleanup.delete_local_branch") as mock_local:
                         result = cleanup_on_cancel(
                             repo_root=git_repo,
                             pr_branches=pr_branches,
@@ -106,6 +106,10 @@ class TestCleanupOnCancel:
                         mock_close.assert_called_once()
                         assert len(result.preserved) == 1
                         assert result.preserved[0]["pr_number"] == 11
+                        # Local branch deletion called for BOTH merged and open
+                        assert mock_local.call_count == 2
+                        # Remote branch deletion only for the open PR
+                        assert mock_remote.call_count == 1
 
     def test_cancel_idempotent(self, git_repo: Path):
         """Running cancel twice is safe."""

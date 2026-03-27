@@ -10,6 +10,7 @@ from unittest.mock import patch
 
 
 from devteam.git.recovery import (
+    RecoveryCheck,
     check_worktree_state,
     check_branch_pushed,
     check_pr_exists,
@@ -39,32 +40,85 @@ class TestCheckWorktreeState:
 
 
 class TestCheckBranchPushed:
-    def test_branch_on_remote(self, git_repo: Path):
-        """Returns True if branch exists on remote with expected commits."""
+    def test_branch_on_remote_matching(self, git_repo: Path):
+        """Returns clean=True when local and remote SHAs match."""
         with patch("devteam.git.recovery.remote_branch_exists", return_value=True):
-            assert check_branch_pushed(git_repo, "feat/x") is True
+            with patch("devteam.git.recovery.git_run") as mock_git:
+                mock_git.side_effect = ["abc12345", "abc12345"]
+                result = check_branch_pushed(git_repo, "feat/x")
+                assert isinstance(result, RecoveryCheck)
+                assert result.exists is True
+                assert result.clean is True
+                assert "up to date" in result.details
+
+    def test_branch_on_remote_diverged(self, git_repo: Path):
+        """Returns clean=False when local and remote SHAs differ."""
+        with patch("devteam.git.recovery.remote_branch_exists", return_value=True):
+            with patch("devteam.git.recovery.git_run") as mock_git:
+                mock_git.side_effect = ["abc12345", "def67890"]
+                result = check_branch_pushed(git_repo, "feat/x")
+                assert isinstance(result, RecoveryCheck)
+                assert result.exists is True
+                assert result.clean is False
+                assert "diverged" in result.details
 
     def test_branch_not_on_remote(self, git_repo: Path):
-        """Returns False if branch does not exist on remote."""
+        """Returns exists=False if branch does not exist on remote."""
         with patch("devteam.git.recovery.remote_branch_exists", return_value=False):
-            assert check_branch_pushed(git_repo, "feat/y") is False
+            result = check_branch_pushed(git_repo, "feat/y")
+            assert isinstance(result, RecoveryCheck)
+            assert result.exists is False
+            assert result.clean is False
+
+    def test_branch_compare_error(self, git_repo: Path):
+        """Returns clean=False when rev-parse fails."""
+        from devteam.git.helpers import GitError
+
+        with patch("devteam.git.recovery.remote_branch_exists", return_value=True):
+            with patch("devteam.git.recovery.git_run") as mock_git:
+                mock_git.side_effect = GitError(["rev-parse"], 1, "not found")
+                result = check_branch_pushed(git_repo, "feat/x")
+                assert result.exists is True
+                assert result.clean is False
+                assert "Cannot compare" in result.details
 
 
 class TestCheckPRExists:
     def test_pr_exists(self, tmp_path: Path):
-        """Returns PR number if PR exists for branch."""
+        """Returns RecoveryCheck with exists=True if PR exists for branch."""
         with patch("devteam.git.recovery.find_existing_pr") as mock_find:
             from devteam.git.pr import PRInfo
 
             mock_find.return_value = PRInfo(number=42, url="...", branch="feat/x")
             result = check_pr_exists(tmp_path, "feat/x")
-            assert result == 42
+            assert isinstance(result, RecoveryCheck)
+            assert result.exists is True
+            assert "PR #42" in result.details
 
     def test_pr_does_not_exist(self, tmp_path: Path):
-        """Returns None if no PR exists."""
+        """Returns RecoveryCheck with exists=False if no PR exists."""
         with patch("devteam.git.recovery.find_existing_pr", return_value=None):
             result = check_pr_exists(tmp_path, "feat/y")
-            assert result is None
+            assert isinstance(result, RecoveryCheck)
+            assert result.exists is False
+            assert "No PR found" in result.details
+
+    def test_pr_found_in_upstream(self, tmp_path: Path):
+        """Returns exists=True when PR found in upstream repo (fork workflow)."""
+        with patch("devteam.git.recovery.find_existing_pr", return_value=None):
+            with patch("devteam.git.recovery.gh_run") as mock_gh:
+                mock_gh.return_value = [{"number": 77, "url": "..."}]
+                result = check_pr_exists(tmp_path, "feat/fork-fix", upstream_repo="org/upstream")
+                assert result.exists is True
+                assert "Upstream PR found" in result.details
+
+    def test_pr_not_found_in_upstream(self, tmp_path: Path):
+        """Returns exists=False when no PR in local or upstream."""
+        with patch("devteam.git.recovery.find_existing_pr", return_value=None):
+            with patch("devteam.git.recovery.gh_run") as mock_gh:
+                mock_gh.return_value = []
+                result = check_pr_exists(tmp_path, "feat/fork-fix", upstream_repo="org/upstream")
+                assert result.exists is False
 
 
 class TestCheckPRMerged:

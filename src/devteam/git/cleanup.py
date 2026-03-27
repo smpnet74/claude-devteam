@@ -37,6 +37,39 @@ class CleanupResult:
     preserved: list[dict[str, Any]] = field(default_factory=list)
 
 
+def _cleanup_local_artifacts(
+    repo_root: Path,
+    branch: str,
+    worktree_path: Path | None,
+    result: CleanupResult,
+) -> None:
+    """Remove local worktree and branch. Shared by merge and cancel paths.
+
+    Args:
+        repo_root: Root of the main git repo.
+        branch: Branch name.
+        worktree_path: Path to the worktree (if it exists).
+        result: CleanupResult to accumulate actions/errors into.
+    """
+    # Remove worktree
+    if worktree_path is not None:
+        try:
+            remove_worktree(repo_root, worktree_path, force=True)
+            result.actions.append(CleanupAction.WORKTREE_REMOVED)
+        except Exception as e:
+            result.errors.append(f"Failed to remove worktree: {e}")
+
+    # Delete local branch
+    try:
+        delete_local_branch(repo_root, branch, force=True)
+        result.actions.append(CleanupAction.LOCAL_BRANCH_DELETED)
+    except ValueError:
+        # Protected branch -- skip
+        pass
+    except Exception as e:
+        result.errors.append(f"Failed to delete local branch: {e}")
+
+
 def cleanup_after_merge(
     repo_root: Path,
     branch: str,
@@ -59,25 +92,10 @@ def cleanup_after_merge(
     """
     result = CleanupResult()
 
-    # 1. Remove worktree
-    if worktree_path is not None:
-        try:
-            remove_worktree(repo_root, worktree_path, force=True)
-            result.actions.append(CleanupAction.WORKTREE_REMOVED)
-        except Exception as e:
-            result.errors.append(f"Failed to remove worktree: {e}")
+    # 1. Remove worktree and local branch
+    _cleanup_local_artifacts(repo_root, branch, worktree_path, result)
 
-    # 2. Delete local branch
-    try:
-        delete_local_branch(repo_root, branch, force=True)
-        result.actions.append(CleanupAction.LOCAL_BRANCH_DELETED)
-    except ValueError:
-        # Protected branch -- skip
-        pass
-    except Exception as e:
-        result.errors.append(f"Failed to delete local branch: {e}")
-
-    # 3. Delete remote branch
+    # 2. Delete remote branch
     try:
         delete_remote_branch(repo_root, branch, remote=remote)
         result.actions.append(CleanupAction.REMOTE_BRANCH_DELETED)
@@ -175,12 +193,15 @@ def cleanup_on_cancel(
         worktree_path = entry.get("worktree_path")
         merged = entry.get("merged", False)
 
-        if merged:
-            combined.preserved.append(entry)
-            continue
-
         if isinstance(worktree_path, str):
             worktree_path = Path(worktree_path)
+
+        if merged:
+            combined.preserved.append(entry)
+            # Still clean local artifacts (worktree, local branch)
+            # but preserve the remote branch and PR
+            _cleanup_local_artifacts(repo_root, branch, worktree_path, combined)
+            continue
 
         single = cleanup_single_pr(
             repo_root=repo_root,

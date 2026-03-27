@@ -55,10 +55,11 @@ def check_branch_pushed(
     repo_root: Path,
     branch: str,
     remote: str = "origin",
-) -> bool:
-    """Check if a branch has been pushed to the remote.
+) -> RecoveryCheck:
+    """Check if local branch is pushed to remote with matching tip commit.
 
-    Used before pushing to avoid redundant pushes.
+    Verifies both that the remote branch exists and that local and remote
+    tip SHAs match (detects divergence).
 
     Args:
         repo_root: Root of the git repo.
@@ -66,27 +67,62 @@ def check_branch_pushed(
         remote: Remote name.
 
     Returns:
-        True if the branch exists on the remote.
+        RecoveryCheck with exists/clean flags and details.
     """
-    return remote_branch_exists(repo_root, branch, remote=remote)
+    if not remote_branch_exists(repo_root, branch, remote=remote):
+        return RecoveryCheck(exists=False, clean=False, details="Remote branch does not exist")
+
+    # Compare local and remote tip SHAs
+    try:
+        local_sha = git_run(["rev-parse", branch], cwd=repo_root).strip()
+        remote_sha = git_run(["rev-parse", f"{remote}/{branch}"], cwd=repo_root).strip()
+        if local_sha == remote_sha:
+            return RecoveryCheck(exists=True, clean=True, details="Branch pushed and up to date")
+        else:
+            return RecoveryCheck(
+                exists=True,
+                clean=False,
+                details=f"Branch diverged: local={local_sha[:8]} remote={remote_sha[:8]}",
+            )
+    except GitError:
+        return RecoveryCheck(exists=True, clean=False, details="Cannot compare branch tips")
 
 
-def check_pr_exists(cwd: Path, branch: str) -> int | None:
-    """Check if a PR already exists for a branch.
+def check_pr_exists(
+    cwd: Path,
+    branch: str,
+    upstream_repo: str | None = None,
+) -> RecoveryCheck:
+    """Check if a PR exists for this branch, including upstream in fork workflows.
 
     Used before creating a PR to avoid duplicates.
 
     Args:
         cwd: Working directory.
         branch: Head branch name.
+        upstream_repo: If working from a fork, the upstream 'owner/name'.
 
     Returns:
-        PR number if one exists, None otherwise.
+        RecoveryCheck with exists flag and details.
     """
     pr = find_existing_pr(cwd, branch)
     if pr is not None:
-        return pr.number
-    return None
+        return RecoveryCheck(exists=True, clean=True, details=f"PR #{pr.number} found")
+
+    # In fork workflows, check upstream repo
+    if upstream_repo:
+        try:
+            result = gh_run(
+                ["pr", "list", "--head", branch, "--repo", upstream_repo, "--json", "number,url"],
+                cwd=cwd,
+                parse_json=True,
+            )
+            if result:
+                return RecoveryCheck(exists=True, clean=True, details="Upstream PR found")
+        except GhError:
+            pass
+
+    return RecoveryCheck(exists=False, clean=False, details="No PR found")
 
 
 def check_pr_merged(cwd: Path, pr_number: int) -> bool:
