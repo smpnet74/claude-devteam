@@ -119,9 +119,9 @@ class TestDurableSleepFunction:
     """Tests for the durable_sleep(), check_pending_sleep(), and cancel_sleep() helpers."""
 
     @pytest.fixture
-    def conn(self, db_path):
-        """Return a connection with the pause table initialized."""
-        c = sqlite3.connect(db_path)
+    def conn(self, tmp_path):
+        """Return a fresh connection with the pause table initialized."""
+        c = sqlite3.connect(str(tmp_path / "durable_func_test.sqlite"))
         init_pause_table(c)
         yield c
         c.close()
@@ -134,7 +134,7 @@ class TestDurableSleepFunction:
         # sleep_fn was called with the duration
         assert calls == [42.0]
         # pause flag is cleared after sleep
-        assert is_paused(conn) is False
+        assert get_global_pause(conn) is None
 
     def test_check_pending_sleep_finds_active_pause(self, conn):
         """check_pending_sleep returns PendingSleep when a pause record exists."""
@@ -165,7 +165,7 @@ class TestDurableSleepFunction:
             durable_sleep(conn, duration_seconds=10.0, sleep_fn=exploding_sleep)
 
         # pause must be cleared despite the exception
-        assert is_paused(conn) is False
+        assert get_global_pause(conn) is None
 
     def test_durable_sleep_does_not_clear_newer_pause(self, conn):
         """Workflow A's finally must not wipe a longer pause set by workflow B during A's sleep."""

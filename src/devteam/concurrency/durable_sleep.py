@@ -55,8 +55,7 @@ def durable_sleep(
     if sleep_fn is None:
         sleep_fn = time.sleep
 
-    resume_at = time.time() + duration_seconds
-    set_global_pause(conn, seconds=duration_seconds, reason=reason)
+    resume_at = set_global_pause(conn, seconds=duration_seconds, reason=reason)
     try:
         sleep_fn(duration_seconds)
     finally:
