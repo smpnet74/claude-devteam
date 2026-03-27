@@ -2,11 +2,18 @@
 
 Verifies that the global pause flag persists in SQLite and survives
 a simulated process restart (close + reopen connection).
+Also tests the durable_sleep(), check_pending_sleep(), and cancel_sleep()
+functions directly.
 """
 
 import sqlite3
 
 import pytest
+from devteam.concurrency.durable_sleep import (
+    cancel_sleep,
+    check_pending_sleep,
+    durable_sleep,
+)
 from devteam.concurrency.rate_limit import (
     init_pause_table,
     set_global_pause,
@@ -104,3 +111,56 @@ class TestDurableSleepPersistence:
         conn_writer.close()
         conn_reader1.close()
         conn_reader2.close()
+
+
+class TestDurableSleepFunction:
+    """Tests for the durable_sleep(), check_pending_sleep(), and cancel_sleep() helpers."""
+
+    @pytest.fixture
+    def conn(self, db_path):
+        """Return a connection with the pause table initialized."""
+        c = sqlite3.connect(db_path)
+        init_pause_table(c)
+        yield c
+        c.close()
+
+    def test_durable_sleep_sets_pause_calls_sleep_clears(self, conn):
+        """durable_sleep sets the pause flag, calls sleep_fn, then clears it."""
+        calls: list[float] = []
+        durable_sleep(conn, duration_seconds=42.0, sleep_fn=calls.append)
+
+        # sleep_fn was called with the duration
+        assert calls == [42.0]
+        # pause flag is cleared after sleep
+        assert is_paused(conn) is False
+
+    def test_check_pending_sleep_finds_active_pause(self, conn):
+        """check_pending_sleep returns PendingSleep when a pause record exists."""
+        set_global_pause(conn, seconds=600)
+        pending = check_pending_sleep(conn)
+        assert pending is not None
+        assert pending.remaining_seconds() > 500
+        assert pending.reason == "rate_limit"
+
+    def test_check_pending_sleep_returns_none_when_clear(self, conn):
+        """check_pending_sleep returns None when no pause exists."""
+        assert check_pending_sleep(conn) is None
+
+    def test_cancel_sleep_clears_pending(self, conn):
+        """cancel_sleep removes the pause record so check_pending_sleep returns None."""
+        set_global_pause(conn, seconds=600)
+        assert is_paused(conn) is True
+        cancel_sleep(conn)
+        assert check_pending_sleep(conn) is None
+
+    def test_durable_sleep_clears_pause_on_exception(self, conn):
+        """Pause flag is cleared even when sleep_fn raises an exception."""
+
+        def exploding_sleep(duration: float) -> None:
+            raise RuntimeError("boom")
+
+        with pytest.raises(RuntimeError, match="boom"):
+            durable_sleep(conn, duration_seconds=10.0, sleep_fn=exploding_sleep)
+
+        # pause must be cleared despite the exception
+        assert is_paused(conn) is False

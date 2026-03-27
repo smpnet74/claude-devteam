@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import sqlite3
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 
 from devteam.concurrency.rate_limit import (
@@ -38,7 +39,7 @@ def durable_sleep(
     conn: sqlite3.Connection,
     duration_seconds: float,
     reason: str = "rate_limit",
-    sleep_fn: object = None,
+    sleep_fn: Callable[[float], None] | None = None,
 ) -> None:
     """Sleep for a duration, persisting the wake time in SQLite.
 
@@ -55,8 +56,10 @@ def durable_sleep(
         sleep_fn = time.sleep
 
     set_global_pause(conn, seconds=duration_seconds, reason=reason)
-    sleep_fn(duration_seconds)  # type: ignore[operator]
-    clear_global_pause(conn)
+    try:
+        sleep_fn(duration_seconds)
+    finally:
+        clear_global_pause(conn)
 
 
 def check_pending_sleep(conn: sqlite3.Connection) -> PendingSleep | None:
@@ -81,7 +84,7 @@ def check_pending_sleep(conn: sqlite3.Connection) -> PendingSleep | None:
 def resume_sleep(
     conn: sqlite3.Connection,
     pending: PendingSleep,
-    sleep_fn: object = None,
+    sleep_fn: Callable[[float], None] | None = None,
 ) -> None:
     """Resume a pending sleep for its remaining duration.
 
@@ -94,9 +97,11 @@ def resume_sleep(
         sleep_fn = time.sleep
 
     remaining = pending.remaining_seconds()
-    if remaining > 0:
-        sleep_fn(remaining)  # type: ignore[operator]
-    clear_global_pause(conn)
+    try:
+        if remaining > 0:
+            sleep_fn(remaining)
+    finally:
+        clear_global_pause(conn)
 
 
 def cancel_sleep(conn: sqlite3.Connection) -> None:

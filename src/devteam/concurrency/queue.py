@@ -52,16 +52,16 @@ class AgentQueueItem:
     def mark_complete(self, conn: sqlite3.Connection) -> None:
         """Mark this queue item as completed, freeing the concurrency slot."""
         conn.execute(
-            "UPDATE agent_queue SET status = ? WHERE id = ?",
-            (COMPLETED, self.id),
+            "UPDATE agent_queue SET status = ?, completed_at = ? WHERE id = ?",
+            (COMPLETED, time.time(), self.id),
         )
         conn.commit()
 
     def mark_failed(self, conn: sqlite3.Connection) -> None:
         """Mark this queue item as failed, freeing the concurrency slot."""
         conn.execute(
-            "UPDATE agent_queue SET status = ? WHERE id = ?",
-            (FAILED, self.id),
+            "UPDATE agent_queue SET status = ?, completed_at = ? WHERE id = ?",
+            (FAILED, time.time(), self.id),
         )
         conn.commit()
 
@@ -122,46 +122,49 @@ def dequeue_next(
 ) -> AgentQueueItem | None:
     """Dequeue the highest-priority pending item, respecting concurrency limit.
 
+    Uses BEGIN IMMEDIATE to hold a write lock for the entire
+    check-then-act sequence, preventing races between concurrent
+    dequeue callers.
+
     Returns None if no items are pending or the concurrency limit is reached.
     """
-    # Check active count
-    active = get_active_count(conn)
-    if active >= max_concurrent:
-        return None
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        active = conn.execute(
+            "SELECT COUNT(*) FROM agent_queue WHERE status = ?", (ACTIVE,)
+        ).fetchone()[0]
+        if active >= max_concurrent:
+            conn.rollback()
+            return None
 
-    # Get highest-priority pending item (priority DESC, enqueued_at ASC = FIFO)
-    row = conn.execute(
-        """
-        SELECT id, job_id, task_id, role, priority, status, enqueued_at
-        FROM agent_queue
-        WHERE status = ?
-        ORDER BY priority DESC, enqueued_at ASC
-        LIMIT 1
-        """,
-        (PENDING,),
-    ).fetchone()
+        row = conn.execute(
+            "SELECT id, job_id, task_id, role, priority, status, enqueued_at "
+            "FROM agent_queue WHERE status = ? "
+            "ORDER BY priority DESC, enqueued_at ASC LIMIT 1",
+            (PENDING,),
+        ).fetchone()
+        if row is None:
+            conn.rollback()
+            return None
 
-    if row is None:
-        return None
+        conn.execute(
+            "UPDATE agent_queue SET status = ?, started_at = ? WHERE id = ?",
+            (ACTIVE, time.time(), row[0]),
+        )
+        conn.commit()
 
-    item = AgentQueueItem(
-        id=row[0],
-        job_id=row[1],
-        task_id=row[2],
-        role=row[3],
-        priority=Priority(row[4]),
-        status=ACTIVE,
-        enqueued_at=row[6],
-    )
-
-    # Atomically mark as active
-    conn.execute(
-        "UPDATE agent_queue SET status = ?, started_at = ? WHERE id = ?",
-        (ACTIVE, time.time(), item.id),
-    )
-    conn.commit()
-
-    return item
+        return AgentQueueItem(
+            id=row[0],
+            job_id=row[1],
+            task_id=row[2],
+            role=row[3],
+            priority=Priority(row[4]),
+            status=ACTIVE,
+            enqueued_at=row[6],
+        )
+    except Exception:
+        conn.rollback()
+        raise
 
 
 def get_queue_depth(conn: sqlite3.Connection) -> int:
