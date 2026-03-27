@@ -74,6 +74,7 @@ def _patch_ensure_connected(mock_store, mock_embedder=None):
 
 def _patch_ensure_connected_error(exc):
     """Return a patch context that makes _ensure_connected raise an exception."""
+
     async def _fake_ensure():
         raise exc
 

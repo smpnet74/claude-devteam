@@ -60,9 +60,7 @@ async def _ensure_connected() -> tuple[Any, Any]:
 # ---------------------------------------------------------------------------
 
 
-async def _search_impl(
-    query: str, scope: str, project: str | None, limit: int
-) -> str:
+async def _search_impl(query: str, scope: str, project: str | None, limit: int) -> str:
     from devteam.knowledge.query_tool import QueryKnowledgeTool
 
     store, embedder = await _ensure_connected()
@@ -100,12 +98,12 @@ async def _redact_impl(entry_id: str) -> dict[str, Any] | None:
     return entry
 
 
-async def _purge_impl(
-    entry_id: str | None, project: str | None, older_than: int | None
-) -> str:
+async def _purge_impl(entry_id: str | None, project: str | None, older_than: int | None) -> str:
     store, _emb = await _ensure_connected()
 
     if older_than is not None:
+        if older_than < 1:
+            return "Error: --older-than must be at least 1 day."
         candidates = await store.get_decay_candidates(
             min_age_hours=older_than * 24,
             max_access_count=0,

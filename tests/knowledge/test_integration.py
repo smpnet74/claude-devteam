@@ -197,9 +197,7 @@ class TestFullKnowledgeLifecycle:
         # If results came back, superseded entry should be excluded
         if "No relevant" not in result and "No sufficiently" not in result:
             assert "v2" in result or "rolling" in result
-            assert "v1" not in result, (
-                "Superseded v1 entry should not appear in query results"
-            )
+            assert "v1" not in result, "Superseded v1 entry should not appear in query results"
 
     async def test_project_scoping_in_lifecycle(self, store, mock_embedder):
         """Project-scoped knowledge should not leak to other projects."""

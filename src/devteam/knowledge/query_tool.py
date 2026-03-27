@@ -63,6 +63,9 @@ class QueryKnowledgeTool:
         Returns:
             Formatted string of relevant knowledge entries.
         """
+        # Enforce schema bounds
+        limit = max(1, min(limit, 50))
+
         # Generate embedding for the query
         try:
             embedding = await self.embedder.embed(query)
