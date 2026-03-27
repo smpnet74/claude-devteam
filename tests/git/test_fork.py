@@ -147,7 +147,9 @@ class TestEnsureFork:
         """Creates a fork via create_fork and returns NEW_FORK with NWO."""
         with patch("devteam.git.fork.check_push_access", return_value=False):
             with patch("devteam.git.fork.find_existing_fork", return_value=None):
-                with patch("devteam.git.fork.create_fork", return_value="myuser/repo") as mock_create:
+                with patch(
+                    "devteam.git.fork.create_fork", return_value="myuser/repo"
+                ) as mock_create:
                     result = ensure_fork("org/repo")
                     assert result.status == ForkStatus.NEW_FORK
                     assert result.fork_nwo == "myuser/repo"
@@ -199,6 +201,7 @@ class TestSetupForkRemotes:
 
     def test_real_error_propagates(self, tmp_path: Path) -> None:
         """Non-'No such remote' errors propagate instead of falling back."""
+
         def side_effect(args: list[str], cwd: Path | None = None) -> str:
             if "set-url" in args:
                 raise GitError(args, 128, "fatal: unable to access remote")
