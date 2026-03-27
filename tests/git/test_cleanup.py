@@ -32,15 +32,26 @@ class TestCleanupAfterMerge:
             mock_remote.assert_called_once()
 
     def test_cleanup_idempotent(self, git_repo: Path):
-        """Running cleanup twice does not raise."""
+        """Running cleanup twice does not raise — second run is a no-op."""
+        from devteam.git.worktree import create_worktree
+
+        info = create_worktree(git_repo, "feat/idempotent")
         with patch("devteam.git.cleanup.delete_remote_branch"):
             result1 = cleanup_after_merge(
                 repo_root=git_repo,
-                branch="feat/already-gone",
-                worktree_path=git_repo / ".worktrees" / "feat-already-gone",
+                branch="feat/idempotent",
+                worktree_path=info.path,
             )
-            # All actions should still be reported (idempotent path)
             assert result1.success is True
+            assert not info.path.exists()
+
+            # Second cleanup — everything already gone
+            result2 = cleanup_after_merge(
+                repo_root=git_repo,
+                branch="feat/idempotent",
+                worktree_path=info.path,
+            )
+            assert result2.success is True
 
 
 class TestCleanupOnCancel:
@@ -134,15 +145,19 @@ class TestCleanupOnCancel:
 
 class TestCleanupSinglePR:
     def test_cleanup_single(self, git_repo: Path):
-        """Cleans up a single PR's artifacts."""
-        with patch("devteam.git.cleanup.close_pr"):
-            with patch("devteam.git.cleanup.delete_remote_branch"):
-                with patch("devteam.git.cleanup.remove_worktree"):
-                    with patch("devteam.git.cleanup.delete_local_branch"):
+        """Cleans up a single PR's artifacts and verifies each step was called."""
+        with patch("devteam.git.cleanup.close_pr") as mock_close:
+            with patch("devteam.git.cleanup.delete_remote_branch") as mock_remote:
+                with patch("devteam.git.cleanup.remove_worktree") as mock_wt:
+                    with patch("devteam.git.cleanup.delete_local_branch") as mock_local:
                         result = cleanup_single_pr(
                             repo_root=git_repo,
                             branch="feat/single",
                             pr_number=5,
-                            worktree_path=None,
+                            worktree_path=git_repo / ".worktrees" / "feat-single",
                         )
                         assert result.success is True
+                        mock_close.assert_called_once()
+                        mock_remote.assert_called_once()
+                        mock_local.assert_called_once()
+                        mock_wt.assert_called_once()

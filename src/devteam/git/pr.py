@@ -37,15 +37,6 @@ class PRCheckStatus(Enum):
     NO_CHECKS = "no_checks"
 
 
-class CodeRabbitCategory(Enum):
-    """Severity category for CodeRabbit comments."""
-
-    ERROR = "error"
-    WARNING = "warning"
-    NITPICK = "nitpick"
-    OTHER = "other"
-
-
 @dataclass
 class CategorizedComments:
     """CodeRabbit comments sorted by severity."""
@@ -102,8 +93,11 @@ def find_existing_pr(
 
     try:
         prs = cast(list[dict[str, Any]], gh_run(args, cwd=cwd, parse_json=True))
-    except GhError:
-        return None
+    except GhError as e:
+        # 404 / "no repository" → no PR found. Other errors propagate.
+        if "404" in e.stderr or "not found" in e.stderr.lower():
+            return None
+        raise
 
     if not prs:
         return None

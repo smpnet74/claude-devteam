@@ -133,7 +133,8 @@ def filter_new_feedback(
             created = datetime.fromisoformat(created_str.replace("Z", "+00:00"))
             if created > since:
                 result.append(comment)
-        except (ValueError, AttributeError):
+        except (ValueError, AttributeError, TypeError):
+            # TypeError: naive vs aware datetime comparison
             result.append(comment)
     return result
 
