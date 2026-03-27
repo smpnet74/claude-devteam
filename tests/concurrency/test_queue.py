@@ -12,14 +12,16 @@ from devteam.concurrency.queue import (
     get_active_count,
     init_queue_table,
 )
+from devteam.concurrency.rate_limit import init_pause_table, set_global_pause
 
 
 @pytest.fixture
 def db(tmp_path):
-    """Create a fresh SQLite database with queue tables."""
+    """Create a fresh SQLite database with queue and pause tables."""
     db_path = str(tmp_path / "test.sqlite")
     conn = sqlite3.connect(db_path)
     init_queue_table(conn)
+    init_pause_table(conn)
     yield conn
     conn.close()
 
@@ -226,3 +228,83 @@ class TestMultiJobFairness:
         item = dequeue_next(db, max_concurrent=3)
         assert item is not None
         assert item.job_id == "W-2"
+
+
+class TestMarkFailedSlotRelease:
+    def test_dequeue_slot_freed_after_failed(self, db):
+        """mark_failed frees the concurrency slot, just like mark_complete."""
+        enqueue_agent_invocation(
+            db,
+            job_id="W-1",
+            task_id="T-1",
+            role="backend",
+            priority=Priority.NORMAL,
+        )
+        item = dequeue_next(db, max_concurrent=1)
+        assert item is not None
+        assert get_active_count(db) == 1
+        # Mark as failed
+        item.mark_failed(db)
+        assert get_active_count(db) == 0
+        # Now another item can be dequeued
+        enqueue_agent_invocation(
+            db,
+            job_id="W-1",
+            task_id="T-2",
+            role="frontend",
+            priority=Priority.NORMAL,
+        )
+        item2 = dequeue_next(db, max_concurrent=1)
+        assert item2 is not None
+        assert item2.task_id == "T-2"
+
+
+class TestActiveOnlyTransitions:
+    def test_mark_complete_rejects_non_active(self, db):
+        """mark_complete raises RuntimeError if item is not active."""
+        enqueue_agent_invocation(
+            db,
+            job_id="W-1",
+            task_id="T-1",
+            role="backend",
+            priority=Priority.NORMAL,
+        )
+        item = dequeue_next(db, max_concurrent=1)
+        assert item is not None
+        item.mark_complete(db)
+        # Second call should fail -- item is already completed
+        with pytest.raises(RuntimeError, match="not active"):
+            item.mark_complete(db)
+
+    def test_mark_failed_rejects_non_active(self, db):
+        """mark_failed raises RuntimeError if item is not active."""
+        enqueue_agent_invocation(
+            db,
+            job_id="W-1",
+            task_id="T-1",
+            role="backend",
+            priority=Priority.NORMAL,
+        )
+        item = dequeue_next(db, max_concurrent=1)
+        assert item is not None
+        item.mark_failed(db)
+        # Second call should fail -- item is already failed
+        with pytest.raises(RuntimeError, match="not active"):
+            item.mark_failed(db)
+
+
+class TestDequeueRespectsGlobalPause:
+    def test_dequeue_returns_none_when_paused(self, db):
+        """dequeue_next returns None when the system is globally paused."""
+        enqueue_agent_invocation(
+            db,
+            job_id="W-1",
+            task_id="T-1",
+            role="backend",
+            priority=Priority.NORMAL,
+        )
+        set_global_pause(db, seconds=600)
+        item = dequeue_next(db, max_concurrent=3)
+        assert item is None
+        # Item is still pending
+        assert get_queue_depth(db) == 1

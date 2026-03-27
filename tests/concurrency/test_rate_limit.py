@@ -115,3 +115,29 @@ class TestHandleRateLimitError:
         error = Exception("anthropic.RateLimitError: retry-after: 120")
         seconds = handle_rate_limit_error(db, error)
         assert seconds == 120
+
+
+class TestMonotonicPause:
+    def test_shorter_pause_does_not_overwrite_longer(self, db):
+        """Setting a shorter pause when a longer one exists keeps the longer one."""
+        set_global_pause(db, seconds=600, reason="rate_limit")
+        pause_before = get_global_pause(db)
+        assert pause_before is not None
+
+        # Try to set a shorter pause -- should be a no-op
+        set_global_pause(db, seconds=60, reason="rate_limit")
+        pause_after = get_global_pause(db)
+        assert pause_after is not None
+        assert abs(pause_after.resume_at - pause_before.resume_at) < 0.01
+
+    def test_longer_pause_overwrites_shorter(self, db):
+        """Setting a longer pause replaces a shorter one."""
+        set_global_pause(db, seconds=60, reason="rate_limit")
+        pause_before = get_global_pause(db)
+        assert pause_before is not None
+
+        set_global_pause(db, seconds=600, reason="rate_limit")
+        pause_after = get_global_pause(db)
+        assert pause_after is not None
+        # New pause should be significantly longer
+        assert pause_after.resume_at > pause_before.resume_at + 500

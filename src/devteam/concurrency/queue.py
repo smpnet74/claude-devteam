@@ -17,6 +17,7 @@ import time
 from dataclasses import dataclass
 
 from devteam.concurrency.priority import Priority
+from devteam.concurrency.rate_limit import is_paused
 
 
 # Queue item states
@@ -50,20 +51,36 @@ class AgentQueueItem:
     enqueued_at: float
 
     def mark_complete(self, conn: sqlite3.Connection) -> None:
-        """Mark this queue item as completed, freeing the concurrency slot."""
-        conn.execute(
-            "UPDATE agent_queue SET status = ?, completed_at = ? WHERE id = ?",
-            (COMPLETED, time.time(), self.id),
+        """Mark this queue item as completed, freeing the concurrency slot.
+
+        Only transitions from ACTIVE status. Raises RuntimeError if the
+        item is not currently active (e.g., already completed or failed).
+        """
+        cursor = conn.execute(
+            "UPDATE agent_queue SET status = ?, completed_at = ? WHERE id = ? AND status = ?",
+            (COMPLETED, time.time(), self.id, ACTIVE),
         )
         conn.commit()
+        if cursor.rowcount == 0:
+            raise RuntimeError(
+                f"Queue item {self.id} is not active; cannot mark as completed"
+            )
 
     def mark_failed(self, conn: sqlite3.Connection) -> None:
-        """Mark this queue item as failed, freeing the concurrency slot."""
-        conn.execute(
-            "UPDATE agent_queue SET status = ?, completed_at = ? WHERE id = ?",
-            (FAILED, time.time(), self.id),
+        """Mark this queue item as failed, freeing the concurrency slot.
+
+        Only transitions from ACTIVE status. Raises RuntimeError if the
+        item is not currently active (e.g., already completed or failed).
+        """
+        cursor = conn.execute(
+            "UPDATE agent_queue SET status = ?, completed_at = ? WHERE id = ? AND status = ?",
+            (FAILED, time.time(), self.id, ACTIVE),
         )
         conn.commit()
+        if cursor.rowcount == 0:
+            raise RuntimeError(
+                f"Queue item {self.id} is not active; cannot mark as failed"
+            )
 
 
 def create_agent_queue_config(max_concurrent: int = 3) -> AgentQueueConfig:
@@ -130,6 +147,10 @@ def dequeue_next(
     """
     conn.execute("BEGIN IMMEDIATE")
     try:
+        if is_paused(conn):
+            conn.rollback()
+            return None
+
         active = conn.execute(
             "SELECT COUNT(*) FROM agent_queue WHERE status = ?", (ACTIVE,)
         ).fetchone()[0]
@@ -140,7 +161,7 @@ def dequeue_next(
         row = conn.execute(
             "SELECT id, job_id, task_id, role, priority, status, enqueued_at "
             "FROM agent_queue WHERE status = ? "
-            "ORDER BY priority DESC, enqueued_at ASC LIMIT 1",
+            "ORDER BY priority DESC, enqueued_at ASC, id ASC LIMIT 1",
             (PENDING,),
         ).fetchone()
         if row is None:

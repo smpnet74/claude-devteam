@@ -21,6 +21,7 @@ class PauseStatus:
     """Current state of the global pause flag."""
 
     resume_at: float  # unix timestamp
+    reason: str = "rate_limit"
 
     def remaining_seconds(self) -> float:
         return max(0.0, self.resume_at - time.time())
@@ -61,6 +62,14 @@ def set_global_pause(
     """
     now = time.time()
     resume_at = now + seconds
+    # Only update if new resume_at is later than the existing one (monotonic).
+    existing = conn.execute(
+        "SELECT resume_at FROM global_pause WHERE id = 1"
+    ).fetchone()
+    if existing and existing[0] >= resume_at:
+        # Existing pause extends further; keep it.
+        conn.commit()
+        return existing[0]
     conn.execute(
         """
         INSERT OR REPLACE INTO global_pause (id, resume_at, set_at, reason)
@@ -74,10 +83,10 @@ def set_global_pause(
 
 def get_global_pause(conn: sqlite3.Connection) -> PauseStatus | None:
     """Get the current pause status. Returns None if not paused or expired."""
-    row = conn.execute("SELECT resume_at FROM global_pause WHERE id = 1").fetchone()
+    row = conn.execute("SELECT resume_at, reason FROM global_pause WHERE id = 1").fetchone()
     if row is None:
         return None
-    status = PauseStatus(resume_at=row[0])
+    status = PauseStatus(resume_at=row[0], reason=row[1] or "rate_limit")
     if status.is_expired():
         # Auto-clear expired pauses
         clear_global_pause(conn)

@@ -77,7 +77,7 @@ def check_pending_sleep(conn: sqlite3.Connection) -> PendingSleep | None:
         return None
     return PendingSleep(
         resume_at=pause.resume_at,
-        reason="rate_limit",
+        reason=pause.reason,
     )
 
 
