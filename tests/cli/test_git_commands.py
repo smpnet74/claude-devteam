@@ -32,6 +32,14 @@ class TestCancelCommand:
             result = runner.invoke(git_app, ["cancel", "W-99"])
             assert result.exit_code == 1 or "not found" in result.output.lower()
 
+    def test_cancel_threads_revert_merged(self):
+        """--revert-merged flag is threaded through to send_cancel_request."""
+        with patch("devteam.cli.commands.git_commands.send_cancel_request") as mock:
+            mock.return_value = {"success": True, "cleaned": [], "preserved": []}
+            result = runner.invoke(git_app, ["cancel", "W-1", "--revert-merged"])
+            assert result.exit_code == 0
+            mock.assert_called_once_with("W-1", revert_merged=True)
+
 
 class TestMergeCommand:
     def test_merge_pr(self):
@@ -65,6 +73,18 @@ class TestTakeoverCommand:
             result = runner.invoke(git_app, ["takeover", "W-1/T-3"])
             assert result.exit_code == 0
             assert ".worktrees/feat-auth" in result.output
+
+    def test_takeover_shows_correct_handback_command(self):
+        """Takeover output references 'devteam git handback', not 'devteam handback'."""
+        with patch("devteam.cli.commands.git_commands.send_takeover_request") as mock:
+            mock.return_value = {
+                "success": True,
+                "worktree_path": "/repo/.worktrees/feat-auth",
+                "task_id": "T-3",
+            }
+            result = runner.invoke(git_app, ["takeover", "W-1/T-3"])
+            assert result.exit_code == 0
+            assert "devteam git handback W-1/T-3" in result.output
 
 
 class TestHandbackCommand:

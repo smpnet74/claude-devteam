@@ -72,10 +72,13 @@ def check_branch_pushed(
     if not remote_branch_exists(repo_root, branch, remote=remote):
         return RecoveryCheck(exists=False, clean=False, details="Remote branch does not exist")
 
-    # Compare local and remote tip SHAs
+    # Compare local tip to actual remote state via ls-remote (not stale tracking ref)
     try:
         local_sha = git_run(["rev-parse", branch], cwd=repo_root).strip()
-        remote_sha = git_run(["rev-parse", f"{remote}/{branch}"], cwd=repo_root).strip()
+        remote_output = git_run(
+            ["ls-remote", remote, f"refs/heads/{branch}"], cwd=repo_root
+        ).strip()
+        remote_sha = remote_output.split()[0] if remote_output else ""
         if local_sha == remote_sha:
             return RecoveryCheck(exists=True, clean=True, details="Branch pushed and up to date")
         else:
@@ -92,6 +95,7 @@ def check_pr_exists(
     cwd: Path,
     branch: str,
     upstream_repo: str | None = None,
+    expected_owner: str | None = None,
 ) -> RecoveryCheck:
     """Check if a PR exists for this branch, including upstream in fork workflows.
 
@@ -101,11 +105,12 @@ def check_pr_exists(
         cwd: Working directory.
         branch: Head branch name.
         upstream_repo: If working from a fork, the upstream 'owner/name'.
+        expected_owner: Optional fork owner to filter by in cross-fork scenarios.
 
     Returns:
         RecoveryCheck with exists flag and details.
     """
-    pr = find_existing_pr(cwd, branch, repo=upstream_repo)
+    pr = find_existing_pr(cwd, branch, repo=upstream_repo, expected_owner=expected_owner)
     if pr is not None:
         return RecoveryCheck(exists=True, clean=True, details=f"PR #{pr.number} found")
 

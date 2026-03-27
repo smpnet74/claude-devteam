@@ -92,6 +92,28 @@ class TestCreatePR:
                 call_args = mock_gh.call_args
                 assert "--repo" in str(call_args) or "org/repo" in str(call_args)
 
+    def test_create_pr_threads_expected_owner(self, tmp_path: Path):
+        """expected_owner is passed through to find_existing_pr."""
+        existing = PRInfo(
+            number=55,
+            url="https://github.com/org/repo/pull/55",
+            branch="feat/fix",
+        )
+        with patch("devteam.git.pr.find_existing_pr", return_value=existing) as mock_find:
+            info = create_pr(
+                cwd=tmp_path,
+                title="Fix",
+                body="...",
+                branch="feat/fix",
+                base="main",
+                upstream_repo="org/repo",
+                expected_owner="my-fork",
+            )
+            assert info.number == 55
+            mock_find.assert_called_once_with(
+                tmp_path, "feat/fix", repo="org/repo", expected_owner="my-fork"
+            )
+
 
 class TestFindExistingPR:
     def test_finds_pr(self, tmp_path: Path):

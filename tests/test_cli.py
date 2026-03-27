@@ -157,8 +157,9 @@ class TestJobCommands:
         assert result.exit_code == 1
 
     def test_start_sequential_ids(self) -> None:
-        runner.invoke(app, ["start", "--prompt", "first"])
-        result = runner.invoke(app, ["start", "--prompt", "second"])
+        with patch("devteam.orchestrator.cli_bridge._detect_repo", return_value=None):
+            runner.invoke(app, ["start", "--prompt", "first"])
+            result = runner.invoke(app, ["start", "--prompt", "second"])
         assert result.exit_code == 0
         assert "W-2" in result.output
 

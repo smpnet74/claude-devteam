@@ -13,6 +13,8 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from devteam.orchestrator.escalation import EscalationResult, resolve_with_human_answer
+from devteam.git.helpers import GitError, git_run
+from devteam.git.recovery import check_same_repo_concurrency
 from devteam.models.entities import JobStatus
 from devteam.orchestrator.jobs import Job, create_job, transition_job
 from devteam.orchestrator.routing import IntakeContext
@@ -150,6 +152,39 @@ def parse_intake(
 
 
 # ---------------------------------------------------------------------------
+# _detect_repo
+# ---------------------------------------------------------------------------
+
+
+def _detect_repo(cwd: Path | None = None) -> str | None:
+    """Detect repository identity from the current working directory.
+
+    Tries ``git remote get-url origin`` first (normalised to owner/name),
+    then falls back to the repo root directory name.
+
+    Returns:
+        A string identifying the repo, or None if detection fails.
+    """
+    try:
+        url = git_run(["remote", "get-url", "origin"], cwd=cwd)
+        # Normalise SSH and HTTPS URLs to "owner/repo"
+        url = url.rstrip("/")
+        if url.endswith(".git"):
+            url = url[:-4]
+        # ssh: git@github.com:owner/repo  or  https://github.com/owner/repo
+        if ":" in url and "@" in url:
+            # SSH format
+            return url.split(":")[-1]
+        # HTTPS format – take last two path segments
+        parts = url.split("/")
+        if len(parts) >= 2:
+            return f"{parts[-2]}/{parts[-1]}"
+    except GitError:
+        pass
+    return None
+
+
+# ---------------------------------------------------------------------------
 # handle_start
 # ---------------------------------------------------------------------------
 
@@ -161,15 +196,36 @@ def handle_start(
     plan: str | None = None,
     issue: str | None = None,
     prompt: str | None = None,
+    cwd: Path | None = None,
 ) -> Job:
     """Handle ``devteam start`` -- create job and prepare for execution.
 
     Returns the created job.  The caller (daemon) is responsible for
     launching the actual workflow execution.
+
+    Raises:
+        ValueError: If another active job already targets the same repo.
     """
     intake = parse_intake(spec=spec, plan=plan, issue=issue, prompt=prompt)
+
+    # Detect repo and check for same-repo concurrency conflicts
+    repo = _detect_repo(cwd)
+    if repo:
+        active_jobs = [
+            {"job_id": j.id, "repo": j.repo}
+            for j in store.list_jobs()
+            if j.repo and j.status not in TERMINAL_STATES
+        ]
+        conflict = check_same_repo_concurrency(repo, active_jobs)
+        if conflict:
+            raise ValueError(
+                f"Repo {repo} already has an active job: {conflict['job_id']}. "
+                "Cancel or complete it before starting another."
+            )
+
     job_id = store.next_id()
     job = create_job(job_id, title, intake)
+    job.repo = repo
     store.save(job)
     return job
 

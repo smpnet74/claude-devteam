@@ -13,9 +13,9 @@ import typer
 git_app = typer.Typer(name="git", help="Git lifecycle commands")
 
 
-def send_cancel_request(job_id: str) -> dict[str, Any]:
+def send_cancel_request(job_id: str, revert_merged: bool = False) -> dict[str, Any]:
     """Send a cancel request to the daemon. Placeholder for httpx call."""
-    raise NotImplementedError("Daemon integration in Plan 1")
+    raise NotImplementedError("Daemon integration pending")
 
 
 def send_merge_request(pr_ref: str) -> dict[str, Any]:
@@ -41,9 +41,8 @@ def cancel_command(
     ),
 ) -> None:
     """Cancel a job and clean up all worktrees, branches, and PRs."""
-    # NOTE: revert_merged will be passed to daemon when wired up
     try:
-        result = send_cancel_request(job_id)
+        result = send_cancel_request(job_id, revert_merged=revert_merged)
     except NotImplementedError:
         typer.echo("Error: daemon not available (not yet implemented)", err=True)
         raise typer.Exit(code=1)
@@ -127,7 +126,7 @@ def takeover_command(
     typer.echo(f"Task {task_id} paused for manual editing.\n")
     typer.echo(f"Worktree: {worktree}")
     typer.echo("\nWhen done, commit your changes and run:")
-    typer.echo(f"  devteam handback {task_ref}")
+    typer.echo(f"  devteam git handback {task_ref}")
 
 
 @git_app.command("handback")

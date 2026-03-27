@@ -1,6 +1,7 @@
 """Tests for CLI bridge -- devteam start, comment, answer, status, cancel."""
 
 import tempfile
+from unittest.mock import patch
 
 import pytest
 
@@ -159,8 +160,9 @@ class TestHandleStart:
 
     def test_sequential_job_ids(self) -> None:
         store = JobStore()
-        j1 = handle_start(store, title="Job 1", prompt="do thing 1")
-        j2 = handle_start(store, title="Job 2", prompt="do thing 2")
+        with patch("devteam.orchestrator.cli_bridge._detect_repo", return_value=None):
+            j1 = handle_start(store, title="Job 1", prompt="do thing 1")
+            j2 = handle_start(store, title="Job 2", prompt="do thing 2")
         assert j1.id == "W-1"
         assert j2.id == "W-2"
 
@@ -168,6 +170,33 @@ class TestHandleStart:
         store = JobStore()
         handle_start(store, title="Test", prompt="fix bug")
         assert store.get("W-1") is not None
+
+    def test_detects_repo_from_cwd(self) -> None:
+        """handle_start populates the repo field from git remote."""
+        store = JobStore()
+        with patch("devteam.orchestrator.cli_bridge.git_run", return_value="git@github.com:org/myapp.git"):
+            job = handle_start(store, title="Test", prompt="fix", cwd=None)
+        assert job.repo == "org/myapp"
+
+    def test_same_repo_concurrency_blocked(self) -> None:
+        """Starting two jobs on the same repo raises ValueError."""
+        store = JobStore()
+        with patch("devteam.orchestrator.cli_bridge.git_run", return_value="https://github.com/org/myapp"):
+            handle_start(store, title="Job 1", prompt="a")
+            with pytest.raises(ValueError, match="already has an active job"):
+                handle_start(store, title="Job 2", prompt="b")
+
+    def test_different_repo_not_blocked(self) -> None:
+        """Starting jobs on different repos succeeds."""
+        store = JobStore()
+        with patch("devteam.orchestrator.cli_bridge.git_run", side_effect=[
+            "https://github.com/org/app1",
+            "https://github.com/org/app2",
+        ]):
+            j1 = handle_start(store, title="Job 1", prompt="a")
+            j2 = handle_start(store, title="Job 2", prompt="b")
+        assert j1.repo == "org/app1"
+        assert j2.repo == "org/app2"
 
 
 # ---------------------------------------------------------------------------
@@ -207,8 +236,9 @@ class TestHandleComment:
 
     def test_comment_shorthand_multiple_jobs_raises(self) -> None:
         store = JobStore()
-        handle_start(store, title="Job 1", prompt="a")
-        handle_start(store, title="Job 2", prompt="b")
+        with patch("devteam.orchestrator.cli_bridge._detect_repo", return_value=None):
+            handle_start(store, title="Job 1", prompt="a")
+            handle_start(store, title="Job 2", prompt="b")
         # Ambiguous -- raises ValueError with helpful message
         with pytest.raises(ValueError, match="Multiple jobs active"):
             handle_comment(store, "T-1", "feedback")
@@ -322,8 +352,9 @@ class TestHandleStatus:
 
     def test_status_all_jobs(self) -> None:
         store = JobStore()
-        handle_start(store, title="Job 1", prompt="a")
-        handle_start(store, title="Job 2", prompt="b")
+        with patch("devteam.orchestrator.cli_bridge._detect_repo", return_value=None):
+            handle_start(store, title="Job 1", prompt="a")
+            handle_start(store, title="Job 2", prompt="b")
         status = handle_status(store)
         assert "jobs" in status
         assert len(status["jobs"]) == 2  # type: ignore[arg-type]

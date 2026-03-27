@@ -42,21 +42,32 @@ class TestCheckWorktreeState:
 
 class TestCheckBranchPushed:
     def test_branch_on_remote_matching(self, git_repo: Path):
-        """Returns clean=True when local and remote SHAs match."""
+        """Returns clean=True when local and remote SHAs match (via ls-remote)."""
         with patch("devteam.git.recovery.remote_branch_exists", return_value=True):
             with patch("devteam.git.recovery.git_run") as mock_git:
-                mock_git.side_effect = ["abc12345", "abc12345"]
+                # First call: rev-parse branch (local sha)
+                # Second call: ls-remote origin refs/heads/feat/x (remote sha)
+                mock_git.side_effect = [
+                    "abc12345",
+                    "abc12345\trefs/heads/feat/x",
+                ]
                 result = check_branch_pushed(git_repo, "feat/x")
                 assert isinstance(result, RecoveryCheck)
                 assert result.exists is True
                 assert result.clean is True
                 assert "up to date" in result.details
+                # Verify ls-remote is called instead of rev-parse origin/branch
+                calls = mock_git.call_args_list
+                assert calls[1][0][0] == ["ls-remote", "origin", "refs/heads/feat/x"]
 
     def test_branch_on_remote_diverged(self, git_repo: Path):
-        """Returns clean=False when local and remote SHAs differ."""
+        """Returns clean=False when local and remote SHAs differ (via ls-remote)."""
         with patch("devteam.git.recovery.remote_branch_exists", return_value=True):
             with patch("devteam.git.recovery.git_run") as mock_git:
-                mock_git.side_effect = ["abc12345", "def67890"]
+                mock_git.side_effect = [
+                    "abc12345",
+                    "def67890\trefs/heads/feat/x",
+                ]
                 result = check_branch_pushed(git_repo, "feat/x")
                 assert isinstance(result, RecoveryCheck)
                 assert result.exists is True
@@ -72,7 +83,7 @@ class TestCheckBranchPushed:
             assert result.clean is False
 
     def test_branch_compare_error(self, git_repo: Path):
-        """Returns clean=False when rev-parse fails."""
+        """Returns clean=False when rev-parse or ls-remote fails."""
         from devteam.git.helpers import GitError
 
         with patch("devteam.git.recovery.remote_branch_exists", return_value=True):
@@ -114,13 +125,29 @@ class TestCheckPRExists:
             assert result.exists is True
             assert "PR #77" in result.details
             # Verify upstream_repo is passed through to find_existing_pr
-            mock_find.assert_called_once_with(tmp_path, "feat/fork-fix", repo="org/upstream")
+            mock_find.assert_called_once_with(
+                tmp_path, "feat/fork-fix", repo="org/upstream", expected_owner=None
+            )
 
     def test_pr_not_found_in_upstream(self, tmp_path: Path):
         """Returns exists=False when no PR found even with upstream_repo."""
         with patch("devteam.git.recovery.find_existing_pr", return_value=None):
             result = check_pr_exists(tmp_path, "feat/fork-fix", upstream_repo="org/upstream")
             assert result.exists is False
+
+    def test_pr_exists_with_expected_owner(self, tmp_path: Path):
+        """Passes expected_owner through to find_existing_pr."""
+        with patch("devteam.git.recovery.find_existing_pr") as mock_find:
+            from devteam.git.pr import PRInfo
+
+            mock_find.return_value = PRInfo(number=88, url="...", branch="feat/fix")
+            result = check_pr_exists(
+                tmp_path, "feat/fix", upstream_repo="org/repo", expected_owner="my-fork"
+            )
+            assert result.exists is True
+            mock_find.assert_called_once_with(
+                tmp_path, "feat/fix", repo="org/repo", expected_owner="my-fork"
+            )
 
 
 class TestCheckPRMerged:

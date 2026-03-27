@@ -128,6 +128,7 @@ def create_pr(
     branch: str,
     base: str = "main",
     upstream_repo: str | None = None,
+    expected_owner: str | None = None,
 ) -> PRInfo:
     """Create a pull request via gh CLI.
 
@@ -140,12 +141,13 @@ def create_pr(
         branch: Head branch name.
         base: Base branch to merge into.
         upstream_repo: If working from a fork, the upstream 'owner/name'.
+        expected_owner: Optional fork owner to filter by in cross-fork scenarios.
 
     Returns:
         PRInfo with number and URL.
     """
     # Idempotency: check if PR already exists
-    existing = find_existing_pr(cwd, branch, repo=upstream_repo)
+    existing = find_existing_pr(cwd, branch, repo=upstream_repo, expected_owner=expected_owner)
     if existing is not None:
         return existing
 
@@ -177,7 +179,7 @@ def create_pr(
         raise GhError(args, 0, f"Could not parse PR number from URL: {url_str}") from e
 
     # Fetch full PR info for consistency
-    fetched = find_existing_pr(cwd, branch, repo=upstream_repo)
+    fetched = find_existing_pr(cwd, branch, repo=upstream_repo, expected_owner=expected_owner)
     if fetched is not None:
         return fetched
 

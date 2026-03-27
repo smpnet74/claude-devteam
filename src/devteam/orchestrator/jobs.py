@@ -59,6 +59,7 @@ class Job:
     id: str
     title: str
     status: JobStatus = JobStatus.CREATED
+    repo: str | None = None
     intake: IntakeContext | None = None
     routing: RoutingResult | None = None
     decomposition: DecompositionResult | None = None
