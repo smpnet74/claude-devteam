@@ -64,9 +64,7 @@ class AgentQueueItem:
         )
         conn.commit()
         if cursor.rowcount == 0:
-            raise RuntimeError(
-                f"Queue item {self.id} is not active; cannot mark as completed"
-            )
+            raise RuntimeError(f"Queue item {self.id} is not active; cannot mark as completed")
 
     def mark_failed(self, conn: sqlite3.Connection) -> None:
         """Mark this queue item as failed, freeing the concurrency slot.
@@ -80,9 +78,7 @@ class AgentQueueItem:
         )
         conn.commit()
         if cursor.rowcount == 0:
-            raise RuntimeError(
-                f"Queue item {self.id} is not active; cannot mark as failed"
-            )
+            raise RuntimeError(f"Queue item {self.id} is not active; cannot mark as failed")
 
 
 def create_agent_queue_config(max_concurrent: int = 3) -> AgentQueueConfig:

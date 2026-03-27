@@ -63,9 +63,7 @@ def set_global_pause(
     now = time.time()
     resume_at = now + seconds
     # Only update if new resume_at is later than the existing one (monotonic).
-    existing = conn.execute(
-        "SELECT resume_at FROM global_pause WHERE id = 1"
-    ).fetchone()
+    existing = conn.execute("SELECT resume_at FROM global_pause WHERE id = 1").fetchone()
     if existing and existing[0] >= resume_at:
         # Existing pause extends further; keep it.
         conn.commit()
@@ -101,8 +99,18 @@ def clear_global_pause(conn: sqlite3.Connection) -> None:
 
 
 def is_paused(conn: sqlite3.Connection) -> bool:
-    """Check if the system is currently paused."""
-    return get_global_pause(conn) is not None
+    """Check if the system is currently paused (read-only, no side effects).
+
+    Safe to call inside a transaction — does NOT auto-clear expired pauses.
+    Use get_global_pause() for the version that auto-clears.
+    """
+    row = conn.execute("SELECT resume_at FROM global_pause WHERE id = 1").fetchone()
+    if row is None:
+        return False
+    resume_at = row[0]
+    if resume_at is not None and time.time() >= resume_at:
+        return False  # Expired, but don't clear here (no commit inside transaction)
+    return True
 
 
 def check_pause_before_invoke(conn: sqlite3.Connection) -> PauseCheckResult:
