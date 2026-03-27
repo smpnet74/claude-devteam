@@ -197,8 +197,46 @@ class TestClosePR:
             from devteam.git.helpers import GhError
 
             mock_gh.side_effect = GhError(["pr", "close"], 1, "already closed")
-            # Should not raise
             close_pr(tmp_path, 42)
+
+    def test_close_already_merged(self, tmp_path: Path):
+        """Closing an already-merged PR is a no-op."""
+        with patch("devteam.git.pr.gh_run") as mock_gh:
+            from devteam.git.helpers import GhError
+
+            mock_gh.side_effect = GhError(["pr", "close"], 1, "Already merged")
+            close_pr(tmp_path, 42)
+
+
+class TestAllGreenBlocking:
+    def test_coderabbit_errors_block_all_green(self, tmp_path: Path):
+        """all_green is False when CodeRabbit reports errors, even if CI passes."""
+        with patch("devteam.git.pr.gh_run") as mock_gh:
+            mock_gh.side_effect = [
+                [{"name": "ci", "state": "completed", "conclusion": "success"}],
+                {
+                    "reviews": [],
+                    "comments": [{"body": "[error] SQL injection", "author": "coderabbitai[bot]"}],
+                    "reviewDecision": "APPROVED",
+                },
+            ]
+            feedback = check_pr_status(tmp_path, 42)
+            assert feedback.check_status == PRCheckStatus.ALL_PASSED
+            assert feedback.all_green is False
+
+    def test_changes_requested_blocks_all_green(self, tmp_path: Path):
+        """all_green is False when review decision is CHANGES_REQUESTED."""
+        with patch("devteam.git.pr.gh_run") as mock_gh:
+            mock_gh.side_effect = [
+                [{"name": "ci", "state": "completed", "conclusion": "success"}],
+                {
+                    "reviews": [],
+                    "comments": [],
+                    "reviewDecision": "CHANGES_REQUESTED",
+                },
+            ]
+            feedback = check_pr_status(tmp_path, 42)
+            assert feedback.all_green is False
 
 
 class TestCodeRabbitCategorization:
@@ -218,6 +256,14 @@ class TestCodeRabbitCategorization:
         assert len(categorized.warnings) == 1
         assert len(categorized.nitpicks) == 1
         assert "SQL injection" in categorized.errors[0]
+
+    def test_categorize_with_dict_author(self):
+        """Handles author as dict (GitHub API format)."""
+        comments = [
+            {"body": "[error] issue", "author": {"login": "coderabbitai[bot]"}},
+        ]
+        categorized = categorize_coderabbit_comments(comments)
+        assert len(categorized.errors) == 1
 
     def test_empty_comments(self):
         """No CodeRabbit comments returns empty categories."""
