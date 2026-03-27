@@ -16,6 +16,7 @@ from devteam.git.recovery import (
     check_pr_exists,
     check_pr_merged,
     reset_worktree_to_clean,
+    check_same_repo_concurrency,
 )
 
 
@@ -154,3 +155,28 @@ class TestResetWorktreeToClean:
         reset_worktree_to_clean(git_repo)
         check = check_worktree_state(git_repo)
         assert check.clean is True
+
+
+class TestSameRepoConcurrency:
+    def test_detects_conflict(self):
+        """Detects when two jobs target the same repo."""
+        active_jobs = [
+            {"job_id": "W-1", "repo": "org/myapp"},
+            {"job_id": "W-2", "repo": "org/other"},
+        ]
+        result = check_same_repo_concurrency("org/myapp", active_jobs)
+        assert result is not None
+        assert result["job_id"] == "W-1"
+
+    def test_no_conflict(self):
+        """No conflict when targeting a different repo."""
+        active_jobs = [
+            {"job_id": "W-1", "repo": "org/other"},
+        ]
+        result = check_same_repo_concurrency("org/myapp", active_jobs)
+        assert result is None
+
+    def test_empty_active_jobs(self):
+        """No conflict when no active jobs."""
+        result = check_same_repo_concurrency("org/myapp", [])
+        assert result is None
