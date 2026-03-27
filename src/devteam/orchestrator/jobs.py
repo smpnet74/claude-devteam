@@ -174,6 +174,11 @@ def execute_job(
         task_launcher: Function to launch a task workflow (returns handle).
         task_checker: Non-blocking check.  Returns (done, result_or_error).
     """
+    # TODO(DBOS): When DBOS durable workflows are integrated, this function
+    # should be decorated with @DBOS.workflow() and each major step (route,
+    # decompose, DAG execute, post-PR review) should be a @DBOS.step() for
+    # crash-safe replay. The current implementation is synchronous and
+    # non-durable.
     if not job.intake:
         raise ValueError("Job has no intake context")
 

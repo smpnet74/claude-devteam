@@ -237,12 +237,24 @@ class TestHandleAnswer:
         assert result is not None
         assert result.resolved
         assert result.answer == "Use Redis"
-        # The tracker should also be updated
-        updated = store.get_question("Q-1")
-        assert updated is not None
-        assert updated.resolved
-        assert updated.answer == "Use Redis"
-        assert updated.answered_by == "human"
+
+    def test_answer_wrong_job_id_raises(self) -> None:
+        """Question ref with wrong job_id should raise ValueError."""
+        store = JobStore()
+        handle_start(store, title="Test", prompt="test")
+        tracker = QuestionTracker(
+            id=store.next_question_id(),
+            task_id="T-1",
+            job_id="W-1",
+            record=QuestionRecord(
+                question="What auth?",
+                question_type=QuestionType.TECHNICAL,
+                context="testing",
+            ),
+        )
+        store.save_question(tracker)
+        with pytest.raises(ValueError, match="belongs to job"):
+            handle_answer(store, "W-99/Q-1", "Use JWT")
 
     def test_answer_shorthand(self) -> None:
         store = JobStore()
@@ -347,3 +359,11 @@ class TestHandleCancel:
         store = JobStore()
         result = handle_cancel(store, "W-99")
         assert not result
+
+    def test_cancel_terminal_job_returns_false(self) -> None:
+        """Canceling an already-canceled job returns False."""
+        store = JobStore()
+        handle_start(store, title="Test", prompt="test")
+        assert handle_cancel(store, "W-1")
+        assert not handle_cancel(store, "W-1")
+

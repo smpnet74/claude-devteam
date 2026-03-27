@@ -200,8 +200,10 @@ class TestDAGParallelism:
         assert result.all_succeeded
         # T-1 and T-2 should be in the first batch (launched before any wait)
         assert len(launch_batches) > 0
-        first_batch = launch_batches[0]
-        assert "T-1" in first_batch or "T-2" in first_batch
+        first_batch = set(launch_batches[0])
+        assert first_batch == {"T-1", "T-2"}, (
+            f"Expected both independent tasks in first batch, got {first_batch}"
+        )
 
 
 # ---------------------------------------------------------------------------

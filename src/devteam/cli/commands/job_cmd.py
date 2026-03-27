@@ -146,12 +146,15 @@ def register_job_commands(app: typer.Typer) -> None:
     ) -> None:
         """Cancel a job and clean up all resources."""
         store = _get_store()
+        job = store.get(target)
+        if not job:
+            typer.echo(f"Job {target} not found.")
+            raise typer.Exit(code=1)
         success = handle_cancel(store, target)
         if success:
             typer.echo(f"Job {target} canceled.")
         else:
-            typer.echo(f"Job {target} not found.")
-            raise typer.Exit(code=1)
+            typer.echo(f"Job {target} is already {job.status.value}.")
         if revert_merged:
             typer.echo("Not yet implemented: revert merged PRs")
 
@@ -180,7 +183,11 @@ def register_job_commands(app: typer.Typer) -> None:
     ) -> None:
         """Answer a pending question to resume a paused task."""
         store = _get_store()
-        result = handle_answer(store, question_ref, response)
+        try:
+            result = handle_answer(store, question_ref, response)
+        except ValueError as e:
+            typer.echo(f"Error: {e}")
+            raise typer.Exit(code=1)
         if result is None:
             typer.echo(f"Question {question_ref} not found.")
             raise typer.Exit(code=1)
