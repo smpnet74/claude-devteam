@@ -68,7 +68,9 @@ def prioritize_task(
                 )
             return PrioritizeResult(
                 success=False,
-                message=(f"Task {job_id}/{task_id} is {exists[1]}, can only prioritize pending tasks."),
+                message=(
+                    f"Task {job_id}/{task_id} is {exists[1]}, can only prioritize pending tasks."
+                ),
             )
 
         db.execute(
