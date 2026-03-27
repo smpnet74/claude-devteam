@@ -30,7 +30,8 @@ class TestCancelCommand:
         with patch("devteam.cli.commands.git_commands.send_cancel_request") as mock:
             mock.return_value = {"success": False, "error": "Job W-99 not found"}
             result = runner.invoke(git_app, ["cancel", "W-99"])
-            assert result.exit_code == 1 or "not found" in result.output.lower()
+            assert result.exit_code == 1
+            assert "not found" in result.output.lower()
 
     def test_cancel_threads_revert_merged(self):
         """--revert-merged flag is threaded through to send_cancel_request."""
@@ -58,7 +59,8 @@ class TestMergeCommand:
                 "failed_checks": ["lint", "test"],
             }
             result = runner.invoke(git_app, ["merge", "W-1/PR-42"])
-            assert result.exit_code == 1 or "not passed" in result.output.lower()
+            assert result.exit_code == 1
+            assert "not passed" in result.output.lower()
 
 
 class TestTakeoverCommand:
@@ -107,4 +109,5 @@ class TestHandbackCommand:
                 "validation": {"clean": False},
             }
             result = runner.invoke(git_app, ["handback", "W-1/T-3"])
-            assert result.exit_code == 1 or "uncommitted" in result.output.lower()
+            assert result.exit_code == 1
+            assert "uncommitted" in result.output.lower()

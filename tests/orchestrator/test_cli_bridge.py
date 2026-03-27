@@ -174,14 +174,18 @@ class TestHandleStart:
     def test_detects_repo_from_cwd(self) -> None:
         """handle_start populates the repo field from git remote."""
         store = JobStore()
-        with patch("devteam.orchestrator.cli_bridge.git_run", return_value="git@github.com:org/myapp.git"):
+        with patch(
+            "devteam.orchestrator.cli_bridge.git_run", return_value="git@github.com:org/myapp.git"
+        ):
             job = handle_start(store, title="Test", prompt="fix", cwd=None)
         assert job.repo == "org/myapp"
 
     def test_same_repo_concurrency_blocked(self) -> None:
         """Starting two jobs on the same repo raises ValueError."""
         store = JobStore()
-        with patch("devteam.orchestrator.cli_bridge.git_run", return_value="https://github.com/org/myapp"):
+        with patch(
+            "devteam.orchestrator.cli_bridge.git_run", return_value="https://github.com/org/myapp"
+        ):
             handle_start(store, title="Job 1", prompt="a")
             with pytest.raises(ValueError, match="already has an active job"):
                 handle_start(store, title="Job 2", prompt="b")
@@ -189,10 +193,13 @@ class TestHandleStart:
     def test_different_repo_not_blocked(self) -> None:
         """Starting jobs on different repos succeeds."""
         store = JobStore()
-        with patch("devteam.orchestrator.cli_bridge.git_run", side_effect=[
-            "https://github.com/org/app1",
-            "https://github.com/org/app2",
-        ]):
+        with patch(
+            "devteam.orchestrator.cli_bridge.git_run",
+            side_effect=[
+                "https://github.com/org/app1",
+                "https://github.com/org/app2",
+            ],
+        ):
             j1 = handle_start(store, title="Job 1", prompt="a")
             j2 = handle_start(store, title="Job 2", prompt="b")
         assert j1.repo == "org/app1"

@@ -171,11 +171,10 @@ def _detect_repo(cwd: Path | None = None) -> str | None:
         url = url.rstrip("/")
         if url.endswith(".git"):
             url = url[:-4]
-        # ssh: git@github.com:owner/repo  or  https://github.com/owner/repo
-        if ":" in url and "@" in url:
-            # SSH format
+        # git@github.com:owner/repo (SCP-style SSH)
+        if ":" in url and "@" in url and "://" not in url:
             return url.split(":")[-1]
-        # HTTPS format – take last two path segments
+        # HTTPS or ssh:// — take last two path segments
         parts = url.split("/")
         if len(parts) >= 2:
             return f"{parts[-2]}/{parts[-1]}"
