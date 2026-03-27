@@ -38,15 +38,28 @@ def _get_store() -> JobStore:
 def register_job_commands(app: typer.Typer) -> None:
     """Register job control commands directly on the main app."""
 
-    # NOTE: --priority is planned for Phase 6 (rate limit & concurrency).
     @app.command()
     def start(
         spec: str | None = typer.Option(None, "--spec", help="Path to spec document"),
         plan: str | None = typer.Option(None, "--plan", help="Path to plan document"),
         prompt: str | None = typer.Option(None, "--prompt", help="Direct prompt for small fixes"),
         issue: str | None = typer.Option(None, "--issue", help="GitHub issue URL"),
+        priority: str | None = typer.Option(
+            None, "--priority", help="Job priority: high, normal, low"
+        ),
     ) -> None:
         """Start a new development job."""
+        # Validate priority early if provided
+        if priority is not None:
+            from devteam.concurrency.cli_priority import parse_priority_flag
+
+            try:
+                parse_priority_flag(priority)
+            except ValueError as e:
+                typer.echo(f"Error: {e}")
+                raise typer.Exit(code=1)
+            typer.echo(f"(Priority '{priority}' noted — will take effect in daemon mode.)")
+
         if not any([spec, plan, prompt, issue]):
             typer.echo("Provide --spec/--plan, --prompt, or --issue to start a job.")
             raise typer.Exit(code=1)

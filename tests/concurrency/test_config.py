@@ -1,0 +1,69 @@
+"""Tests for loading concurrency configuration from config.toml."""
+
+import pytest
+from devteam.concurrency.config import load_concurrency_config
+
+
+class TestConcurrencyConfig:
+    def test_load_from_full_config(self):
+        config = {
+            "general": {"max_concurrent_agents": 5},
+            "rate_limit": {"default_backoff_seconds": 900},
+        }
+        cc = load_concurrency_config(config)
+        assert cc.max_concurrent_agents == 5
+        assert cc.default_backoff_seconds == 900
+
+    def test_defaults_when_missing(self):
+        cc = load_concurrency_config({})
+        assert cc.max_concurrent_agents == 3
+        assert cc.default_backoff_seconds == 1800
+
+    def test_partial_config(self):
+        config = {"general": {"max_concurrent_agents": 10}}
+        cc = load_concurrency_config(config)
+        assert cc.max_concurrent_agents == 10
+        assert cc.default_backoff_seconds == 1800  # default
+
+    def test_invalid_concurrency_raises(self):
+        config = {"general": {"max_concurrent_agents": -1}}
+        with pytest.raises(ValueError, match="must be a positive integer"):
+            load_concurrency_config(config)
+
+    def test_invalid_backoff_raises(self):
+        config = {"rate_limit": {"default_backoff_seconds": 0}}
+        with pytest.raises(ValueError, match="must be a positive integer"):
+            load_concurrency_config(config)
+
+    def test_boolean_true_rejected_for_max_concurrent(self):
+        """bool is a subclass of int; True/False must be rejected."""
+        config = {"general": {"max_concurrent_agents": True}}
+        with pytest.raises(ValueError, match="must be a positive integer"):
+            load_concurrency_config(config)
+
+    def test_boolean_false_rejected_for_max_concurrent(self):
+        config = {"general": {"max_concurrent_agents": False}}
+        with pytest.raises(ValueError, match="must be a positive integer"):
+            load_concurrency_config(config)
+
+    def test_boolean_true_rejected_for_backoff(self):
+        config = {"rate_limit": {"default_backoff_seconds": True}}
+        with pytest.raises(ValueError, match="must be a positive integer"):
+            load_concurrency_config(config)
+
+    def test_boolean_false_rejected_for_backoff(self):
+        config = {"rate_limit": {"default_backoff_seconds": False}}
+        with pytest.raises(ValueError, match="must be a positive integer"):
+            load_concurrency_config(config)
+
+    def test_general_not_dict_raises(self):
+        """Non-dict 'general' section is rejected."""
+        config = {"general": "not a dict"}
+        with pytest.raises(ValueError, match="config 'general' must be a dict"):
+            load_concurrency_config(config)
+
+    def test_rate_limit_not_dict_raises(self):
+        """Non-dict 'rate_limit' section is rejected."""
+        config = {"rate_limit": [1, 2, 3]}
+        with pytest.raises(ValueError, match="config 'rate_limit' must be a dict"):
+            load_concurrency_config(config)

@@ -94,39 +94,45 @@ class TestCheckPauseBeforeInvoke:
 class TestHandleRateLimitError:
     def test_parses_reset_time_from_error(self, db):
         error = Exception("Rate limit exceeded. Retry after 1800 seconds.")
-        seconds = handle_rate_limit_error(db, error)
+        seconds, resume_at = handle_rate_limit_error(db, error)
         assert seconds == 1800
+        assert resume_at > 0
 
     def test_uses_default_when_unparseable(self, db):
         error = Exception("Rate limit exceeded.")
-        seconds = handle_rate_limit_error(db, error)
+        seconds, resume_at = handle_rate_limit_error(db, error)
         assert seconds == DEFAULT_BACKOFF_SECONDS
+        assert resume_at > 0
 
     def test_sets_global_pause_on_handle(self, db):
         error = Exception("Rate limit exceeded. Retry after 600 seconds.")
-        handle_rate_limit_error(db, error)
+        seconds, resume_at = handle_rate_limit_error(db, error)
         assert is_paused(db) is True
         pause = get_global_pause(db)
         assert pause is not None
         assert pause.remaining_seconds() > 500
+        assert pause.resume_at == resume_at
 
     def test_handles_anthropic_rate_limit_format(self, db):
         """Test parsing of 'retry-after: 120' header-style message."""
         error = Exception("anthropic.RateLimitError: retry-after: 120")
-        seconds = handle_rate_limit_error(db, error)
+        seconds, resume_at = handle_rate_limit_error(db, error)
         assert seconds == 120
+        assert resume_at > 0
 
     def test_uses_custom_default_backoff(self, db):
         """Caller can override the default backoff (e.g., from config)."""
         error = Exception("Rate limit exceeded.")
-        seconds = handle_rate_limit_error(db, error, default_backoff=900)
+        seconds, resume_at = handle_rate_limit_error(db, error, default_backoff=900)
         assert seconds == 900
+        assert resume_at > 0
 
     def test_parsed_value_overrides_custom_default(self, db):
         """When the error contains a parseable retry-after, the custom default is ignored."""
         error = Exception("Retry after 300 seconds.")
-        seconds = handle_rate_limit_error(db, error, default_backoff=900)
+        seconds, resume_at = handle_rate_limit_error(db, error, default_backoff=900)
         assert seconds == 300
+        assert resume_at > 0
 
 
 class TestMonotonicPause:
