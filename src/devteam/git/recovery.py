@@ -151,3 +151,25 @@ def reset_worktree_to_clean(worktree_path: Path) -> None:
     """
     git_run(["reset", "--hard", "HEAD"], cwd=worktree_path)
     git_run(["clean", "-fd"], cwd=worktree_path)
+
+
+def check_same_repo_concurrency(
+    target_repo: str,
+    active_jobs: list[dict[str, str]],
+) -> dict[str, str] | None:
+    """Check if another active job targets the same repository.
+
+    Used at ``devteam start`` time to warn the operator about concurrent
+    work on the same repo.
+
+    Args:
+        target_repo: Repository the new job will target ('owner/name').
+        active_jobs: List of dicts with 'job_id' and 'repo' keys.
+
+    Returns:
+        The conflicting job dict if found, None otherwise.
+    """
+    for job in active_jobs:
+        if job.get("repo") == target_repo:
+            return job
+    return None
