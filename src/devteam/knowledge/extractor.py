@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
+from typing import Literal
 
 from pydantic import BaseModel
 
@@ -25,7 +26,7 @@ class ExtractedEntry(BaseModel):
     content: str
     summary: str
     tags: list[str]
-    scope: str  # "process" or "project"
+    scope: Literal["process", "project"]
 
 
 class ExtractionResult(BaseModel):

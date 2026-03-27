@@ -5,12 +5,24 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from devteam.knowledge.boundaries import apply_scope_filter
 from devteam.knowledge.embeddings import OllamaEmbedder
 from devteam.knowledge.store import KnowledgeStore
 
 logger = logging.getLogger(__name__)
 
 RELEVANCE_THRESHOLD = 0.3  # minimum cosine similarity to include
+
+# Map agent roles to their relevant domain tags for my_role scope filtering.
+_ROLE_DOMAIN_TAGS: dict[str, list[str]] = {
+    "backend_engineer": ["backend", "api", "database"],
+    "frontend_engineer": ["frontend", "ui", "css"],
+    "devops_engineer": ["devops", "ci", "deployment"],
+    "data_engineer": ["data", "pipeline", "etl"],
+    "cloud_engineer": ["cloud", "infra", "platform"],
+    "qa_engineer": ["testing", "qa", "e2e"],
+    "security_engineer": ["security", "auth", "encryption"],
+}
 
 
 class QueryKnowledgeTool:
@@ -52,19 +64,17 @@ class QueryKnowledgeTool:
                 "Proceed without knowledge base consultation."
             )
 
-        # Build scope filters
-        sharing = None
-        project = None
+        # Build scope filters via centralized boundary logic
+        scope_filter = apply_scope_filter(
+            scope=scope, project=self.current_project, role=self.agent_role
+        )
+        sharing = scope_filter.get("sharing")
+        project = scope_filter.get("project")
         tags = None
 
-        if scope == "shared":
-            sharing = "shared"
-        elif scope == "project":
-            project = self.current_project
-        elif scope == "my_role":
-            tags = [self.agent_role]
-        elif scope == "all":
-            project = self.current_project
+        if scope == "my_role":
+            # Use domain tags for the role rather than the role name itself
+            tags = _ROLE_DOMAIN_TAGS.get(self.agent_role, [self.agent_role])
 
         # Execute vector search
         try:

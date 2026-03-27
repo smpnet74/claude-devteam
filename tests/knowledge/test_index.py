@@ -110,3 +110,32 @@ class TestMemoryIndexBuilder:
         index = await builder.build(role="backend_engineer", project="myapp")
         # Should show counts like "(2 entries)"
         assert "entr" in index.lower()
+
+    async def test_index_stays_bounded_with_many_entries(self):
+        """Index topics per section are capped at 10 even with many entries."""
+        s = KnowledgeStore("mem://")
+        await s.connect()
+
+        # Insert 25 distinct shared entries to exceed the 10-topic cap
+        for i in range(25):
+            await s.create_entry(
+                content=f"Knowledge item number {i}",
+                summary=f"Topic {i}",
+                tags=["shared"],
+                sharing="shared",
+                project=None,
+                embedding=[0.01 * (i + 1)] * 768,
+            )
+
+        builder = MemoryIndexBuilder(s)
+        index = await builder.build(role="backend_engineer", project="myapp")
+
+        # Should contain the overflow marker
+        assert "... and" in index
+        assert "more topics" in index
+
+        # Count bullet items in the Shared section -- at most 10 + 1 overflow line
+        bullet_lines = [line for line in index.split("\n") if line.startswith("- ")]
+        assert len(bullet_lines) <= 11  # 10 topics + 1 overflow
+
+        await s.close()
