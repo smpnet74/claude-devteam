@@ -204,7 +204,7 @@ def handle_comment(
     if not job:
         return False
 
-    job.add_comment(f"[{task_id}] {comment}")
+    job.add_comment(task_id, comment)
     store.save(job)
     return True
 
@@ -238,6 +238,15 @@ def handle_answer(
     tracker.answer = answer
     tracker.answered_by = "human"
     store.save_question(tracker)
+
+    # Store answer on the job for deferred task resumption.
+    # Full resume flow requires DBOS workflow replay (Phase 6). For now
+    # the answer is recorded so the next execution attempt can pick it up.
+    job = store.get(tracker.job_id)
+    if job:
+        job.pending_answers[tracker.task_id] = answer
+        store.save(job)
+
     return result
 
 

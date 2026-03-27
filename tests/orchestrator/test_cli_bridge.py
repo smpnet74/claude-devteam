@@ -182,7 +182,9 @@ class TestHandleComment:
 
         success = handle_comment(store, "W-1/T-3", "Use PostgreSQL")
         assert success
-        assert any("PostgreSQL" in c for c in job.comments)
+        assert any("PostgreSQL" in msg for _, msg in job.comments)
+        # Verify task_id is stored
+        assert job.comments[0][0] == "T-3"
 
     def test_comment_shorthand_single_job(self) -> None:
         store = JobStore()
@@ -191,6 +193,7 @@ class TestHandleComment:
         success = handle_comment(store, "T-3", "feedback")
         assert success
         assert len(job.comments) == 1
+        assert job.comments[0] == ("T-3", "feedback")
 
     def test_comment_nonexistent_job(self) -> None:
         store = JobStore()
@@ -257,6 +260,29 @@ class TestHandleAnswer:
         result = handle_answer(store, "Q-1", "answer")
         assert result is not None
         assert result.resolved
+
+    def test_answer_records_pending_answer_on_job(self) -> None:
+        """When an answer is recorded, it should be stored in job.pending_answers."""
+        store = JobStore()
+        job = handle_start(store, title="Test", prompt="test")
+        q = QuestionTracker(
+            id="Q-1",
+            task_id="T-2",
+            job_id=job.id,
+            record=QuestionRecord(
+                question="Redis or Memcached?",
+                question_type=QuestionType.TECHNICAL,
+            ),
+        )
+        store.save_question(q)
+
+        result = handle_answer(store, "Q-1", "Use Redis")
+        assert result is not None
+        assert result.resolved
+        # Verify pending_answers on the job
+        updated_job = store.get(job.id)
+        assert updated_job is not None
+        assert updated_job.pending_answers.get("T-2") == "Use Redis"
 
     def test_answer_nonexistent_question(self) -> None:
         store = JobStore()

@@ -11,9 +11,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Literal
 
 from devteam.models.entities import JobStatus, TaskStatus
+from devteam.models.state import InvalidTransitionError, validate_job_transition
 from devteam.orchestrator.dag import (
     DAGExecutionResult,
     DAGExecutor,
@@ -30,6 +31,7 @@ from devteam.orchestrator.schemas import (
     DecompositionResult,
     RoutePath,
     RoutingResult,
+    TaskDecomposition,
     WorkType,
 )
 from devteam.orchestrator.task_workflow import TaskWorkflowResult
@@ -64,8 +66,9 @@ class Job:
     created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     completed_at: datetime | None = None
     error: str | None = None
-    comments: list[str] = field(default_factory=list)
+    comments: list[tuple[str, str]] = field(default_factory=list)
     cancelled: bool = False
+    pending_answers: dict[str, str] = field(default_factory=dict)
 
     @property
     def progress(self) -> tuple[int, int]:
@@ -80,9 +83,13 @@ class Job:
         )
         return (completed, total)
 
-    def add_comment(self, comment: str) -> None:
-        """Add operator feedback to the job."""
-        self.comments.append(comment)
+    def add_comment(self, task_id: str, comment: str) -> None:
+        """Add operator feedback associated with a task."""
+        self.comments.append((task_id, comment))
+
+    def get_comments_for_task(self, task_id: str) -> list[str]:
+        """Return all comments targeting a specific task."""
+        return [msg for tid, msg in self.comments if tid == task_id]
 
 
 def create_job(
@@ -95,57 +102,21 @@ def create_job(
 
 
 # ---------------------------------------------------------------------------
-# State transitions
+# State transitions -- delegates to the shared state machine in models.state
 # ---------------------------------------------------------------------------
-
-# Transition table for the workflow-engine Job (a superset of the persistence
-# model's table: adds PLANNING->EXECUTING for small-fix and
-# EXECUTING->COMPLETED for research path).
-_JOB_TRANSITIONS: dict[JobStatus, set[JobStatus]] = {
-    JobStatus.CREATED: {JobStatus.PLANNING, JobStatus.CANCELED},
-    JobStatus.PLANNING: {
-        JobStatus.DECOMPOSING,
-        JobStatus.EXECUTING,  # small fix skips decomposition
-        JobStatus.CANCELED,
-        JobStatus.FAILED,
-    },
-    JobStatus.DECOMPOSING: {
-        JobStatus.EXECUTING,
-        JobStatus.CANCELED,
-        JobStatus.FAILED,
-    },
-    JobStatus.EXECUTING: {
-        JobStatus.REVIEWING,
-        JobStatus.COMPLETED,  # research path has no post-PR review
-        JobStatus.PAUSED_RATE_LIMIT,
-        JobStatus.CANCELED,
-        JobStatus.FAILED,
-    },
-    JobStatus.REVIEWING: {
-        JobStatus.COMPLETED,
-        JobStatus.EXECUTING,  # revision requested
-        JobStatus.CANCELED,
-        JobStatus.FAILED,
-    },
-    JobStatus.PAUSED_RATE_LIMIT: {
-        JobStatus.EXECUTING,
-        JobStatus.CANCELED,
-    },
-    JobStatus.COMPLETED: set(),
-    JobStatus.FAILED: set(),
-    JobStatus.CANCELED: set(),
-}
 
 
 def transition_job(job: Job, new_status: JobStatus) -> Job:
     """Transition a job to a new status with validation.
 
-    Enforces valid state transitions per the spec:
-    created -> planning -> decomposing -> executing -> reviewing -> completed
+    Uses the shared JOB_TRANSITIONS table from ``models.state`` as the
+    single source of truth. Raises ``ValueError`` on invalid transitions
+    (wraps ``InvalidTransitionError`` for backward compatibility).
     """
-    allowed = _JOB_TRANSITIONS.get(job.status, set())
-    if new_status not in allowed:
-        raise ValueError(f"Invalid transition: {job.status.value} -> {new_status.value}")
+    try:
+        validate_job_transition(job.status, new_status)
+    except InvalidTransitionError as exc:
+        raise ValueError(str(exc)) from exc
 
     job.status = new_status
     if new_status == JobStatus.COMPLETED:
@@ -225,29 +196,76 @@ def execute_job(
             transition_job(job, JobStatus.COMPLETED)
             return job
 
-        if not task_launcher or not task_checker:
-            raise ValueError("task_launcher and task_checker are required for non-research routes")
+        # Step 3: Small fix path -- skip decomposition, create single task
+        if job.routing.path == RoutePath.SMALL_FIX:
+            target_team: Literal["a", "b"] = (
+                "a" if job.routing.target_team != "b" else "b"
+            )
+            single_task = TaskDecomposition(
+                id="T-1",
+                description=job.intake.prompt or job.intake.spec or "Small fix",
+                assigned_to="backend_engineer",
+                team=target_team,
+                depends_on=[],
+                pr_group="fix/small-fix",
+            )
+            job.decomposition = DecompositionResult(
+                tasks=[single_task],
+                peer_assignments={},
+                parallel_groups=[["T-1"]],
+            )
+            # Skip decomposing state -- go directly to executing
+            transition_job(job, JobStatus.EXECUTING)
+        else:
+            # Step 3b: Full project / OSS -- decompose via CA
+            if not task_launcher or not task_checker:
+                raise ValueError(
+                    "task_launcher and task_checker are required for non-research routes"
+                )
 
-        # Step 3: Decompose
-        transition_job(job, JobStatus.DECOMPOSING)
-        spec = job.intake.spec or ""
-        plan = job.intake.plan or ""
-        job.decomposition = decompose(spec, plan, job.routing, invoker)
+            transition_job(job, JobStatus.DECOMPOSING)
+            spec = job.intake.spec or ""
+            plan = job.intake.plan or ""
+            job.decomposition = decompose(spec, plan, job.routing, invoker)
 
         if job.cancelled:
             transition_job(job, JobStatus.CANCELED)
             return job
 
-        # Step 4: Execute DAG
-        transition_job(job, JobStatus.EXECUTING)
-
-        if task_launcher and task_checker:
-            dag = build_dag(job.decomposition)
-            executor = DAGExecutor(
-                launch_task=task_launcher,
-                check_complete=task_checker,
+        if not task_launcher or not task_checker:
+            raise ValueError(
+                "task_launcher and task_checker are required for non-research routes"
             )
-            job.dag_result = executor.execute(dag)
+
+        # Step 4: Execute DAG
+        if job.status != JobStatus.EXECUTING:
+            transition_job(job, JobStatus.EXECUTING)
+
+        dag = build_dag(job.decomposition)
+        executor = DAGExecutor(
+            launch_task=task_launcher,
+            check_complete=task_checker,
+        )
+        job.dag_result = executor.execute(dag)
+
+        # Populate task_results from DAG completion for progress tracking
+        if job.dag_result:
+            for task_id, result in job.dag_result.results.items():
+                if isinstance(result, TaskWorkflowResult):
+                    job.task_results[task_id] = result
+                else:
+                    # Wrap raw results as completed TaskWorkflowResult
+                    job.task_results[task_id] = TaskWorkflowResult(
+                        task_id=task_id,
+                        status=TaskStatus.COMPLETED,
+                    )
+            for task_id in job.dag_result.failed_tasks:
+                if task_id not in job.task_results:
+                    job.task_results[task_id] = TaskWorkflowResult(
+                        task_id=task_id,
+                        status=TaskStatus.FAILED,
+                        error=job.dag_result.failed_tasks[task_id],
+                    )
 
         if job.cancelled:
             transition_job(job, JobStatus.CANCELED)
@@ -258,18 +276,24 @@ def execute_job(
             if job.dag_result.all_succeeded:
                 transition_job(job, JobStatus.REVIEWING)
                 work_type = determine_work_type_from_route(job.routing.path)
-                execute_post_pr_review(
+                review_result = execute_post_pr_review(
                     work_type=work_type,
                     pr_context="PR review context placeholder",
                     invoker=invoker,
                 )
+                if not review_result.all_passed:
+                    job.error = (
+                        f"Post-PR review failed: {', '.join(review_result.failed_gates)}"
+                    )
+                    transition_job(job, JobStatus.FAILED)
+                    return job
 
         # Step 6: Complete
         if job.dag_result and job.dag_result.all_succeeded:
             transition_job(job, JobStatus.COMPLETED)
         elif job.dag_result:
             transition_job(job, JobStatus.FAILED)
-            job.error = "Some tasks failed"
+            job.error = job.error or "Some tasks failed"
 
     except Exception as e:
         # Any unhandled error transitions the job to FAILED

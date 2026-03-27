@@ -60,7 +60,7 @@ class TestTransitionJob:
 
     def test_invalid_transition_raises(self) -> None:
         job = Job(id="W-1", title="Test")
-        with pytest.raises(ValueError, match="Invalid transition"):
+        with pytest.raises(ValueError, match="Invalid.*transition"):
             transition_job(job, JobStatus.COMPLETED)
 
     def test_full_lifecycle(self) -> None:
@@ -320,12 +320,227 @@ class TestExecuteJob:
 class TestJobComments:
     def test_add_comment(self) -> None:
         job = create_job("W-1", "Test", IntakeContext())
-        job.add_comment("Use PostgreSQL instead")
+        job.add_comment("T-1", "Use PostgreSQL instead")
         assert len(job.comments) == 1
-        assert "PostgreSQL" in job.comments[0]
+        assert job.comments[0] == ("T-1", "Use PostgreSQL instead")
 
     def test_multiple_comments(self) -> None:
         job = create_job("W-1", "Test", IntakeContext())
-        job.add_comment("first")
-        job.add_comment("second")
+        job.add_comment("T-1", "first")
+        job.add_comment("T-2", "second")
         assert len(job.comments) == 2
+
+    def test_get_comments_for_task(self) -> None:
+        job = create_job("W-1", "Test", IntakeContext())
+        job.add_comment("T-1", "feedback for T-1")
+        job.add_comment("T-2", "feedback for T-2")
+        job.add_comment("T-1", "more feedback for T-1")
+        assert job.get_comments_for_task("T-1") == [
+            "feedback for T-1",
+            "more feedback for T-1",
+        ]
+        assert job.get_comments_for_task("T-2") == ["feedback for T-2"]
+        assert job.get_comments_for_task("T-99") == []
+
+
+# ---------------------------------------------------------------------------
+# Small fix execution path
+# ---------------------------------------------------------------------------
+
+
+class TestSmallFixPath:
+    def test_small_fix_skips_decomposition_uses_single_task(self) -> None:
+        """Small fix creates a single-task decomposition and skips the CA."""
+        invoker = MagicMock()
+        # CEO returns small_fix routing
+        invoker.invoke.side_effect = [
+            {
+                "path": "small_fix",
+                "reasoning": "Simple one-liner",
+                "target_team": "a",
+            },
+            # Post-PR reviews (QA, Security, Tech Writer)
+            {"verdict": "approved", "comments": [], "summary": "ok"},
+            {"verdict": "approved", "comments": [], "summary": "ok"},
+            {"verdict": "approved", "comments": [], "summary": "ok"},
+        ]
+
+        intake = IntakeContext(prompt="Fix the typo in README")
+        job = create_job("W-1", "Fix typo", intake)
+
+        def launch(task):  # type: ignore[no-untyped-def]
+            return task.id
+
+        def wait(handle):  # type: ignore[no-untyped-def]
+            return (True, {"status": "completed"})
+
+        result = execute_job(job, invoker, task_launcher=launch, task_checker=wait)
+        assert result.status == JobStatus.COMPLETED
+        assert result.decomposition is not None
+        assert len(result.decomposition.tasks) == 1
+        assert result.decomposition.tasks[0].id == "T-1"
+        # CA (decompose) was NOT called -- only CEO routing + post-PR reviews
+        # CEO routing is the first invoke call
+        assert invoker.invoke.call_count == 4  # routing + 3 post-PR reviews
+
+    def test_small_fix_without_launchers_fails(self) -> None:
+        """Small fix still needs task_launcher/task_checker for DAG execution."""
+        invoker = MagicMock()
+        invoker.invoke.return_value = {
+            "path": "small_fix",
+            "reasoning": "Simple fix",
+            "target_team": "b",
+        }
+        intake = IntakeContext(prompt="Fix it")
+        job = create_job("W-1", "Fix", intake)
+
+        result = execute_job(job, invoker, task_launcher=None, task_checker=None)
+        assert result.status == JobStatus.FAILED
+        assert "task_launcher" in (result.error or "")
+
+
+# ---------------------------------------------------------------------------
+# Post-PR review gate enforcement
+# ---------------------------------------------------------------------------
+
+
+class TestReviewGateEnforcement:
+    def test_failed_required_gate_blocks_completion(self) -> None:
+        """A failing required post-PR review gate transitions job to FAILED."""
+        invoker = MagicMock()
+
+        invoker.invoke.side_effect = [
+            # CA decomposition
+            {
+                "tasks": [
+                    {
+                        "id": "T-1",
+                        "description": "Build API",
+                        "assigned_to": "backend_engineer",
+                        "team": "a",
+                        "depends_on": [],
+                        "pr_group": "feat/api",
+                        "work_type": "code",
+                    },
+                ],
+                "peer_assignments": {"T-1": "frontend_engineer"},
+                "parallel_groups": [["T-1"]],
+            },
+            # Post-PR QA review -- fails with needs_revision
+            {
+                "verdict": "needs_revision",
+                "comments": [
+                    {
+                        "file": "api.py",
+                        "line": 10,
+                        "severity": "error",
+                        "comment": "Missing validation",
+                    }
+                ],
+                "summary": "Needs work",
+            },
+        ]
+
+        intake = IntakeContext(spec="Build an API", plan="Step 1: schema")
+        job = create_job("W-1", "My App", intake)
+
+        def launch(task):  # type: ignore[no-untyped-def]
+            return task.id
+
+        def wait(handle):  # type: ignore[no-untyped-def]
+            return (True, {"status": "completed"})
+
+        result = execute_job(job, invoker, task_launcher=launch, task_checker=wait)
+        assert result.status == JobStatus.FAILED
+        assert result.error is not None
+        assert "Post-PR review failed" in result.error
+        assert "qa_review" in result.error
+
+
+# ---------------------------------------------------------------------------
+# Progress tracking after DAG execution
+# ---------------------------------------------------------------------------
+
+
+class TestProgressTracking:
+    def test_progress_populated_after_dag(self) -> None:
+        """task_results should be populated from DAG results for progress."""
+        invoker = MagicMock()
+
+        invoker.invoke.side_effect = [
+            # CA decomposition
+            {
+                "tasks": [
+                    {
+                        "id": "T-1",
+                        "description": "Build API",
+                        "assigned_to": "backend_engineer",
+                        "team": "a",
+                        "depends_on": [],
+                        "pr_group": "feat/api",
+                        "work_type": "code",
+                    },
+                    {
+                        "id": "T-2",
+                        "description": "Build UI",
+                        "assigned_to": "frontend_engineer",
+                        "team": "a",
+                        "depends_on": [],
+                        "pr_group": "feat/ui",
+                        "work_type": "code",
+                    },
+                ],
+                "peer_assignments": {
+                    "T-1": "frontend_engineer",
+                    "T-2": "backend_engineer",
+                },
+                "parallel_groups": [["T-1", "T-2"]],
+            },
+            # Post-PR reviews (QA, Security, Tech Writer)
+            {"verdict": "approved", "comments": [], "summary": "ok"},
+            {"verdict": "approved", "comments": [], "summary": "ok"},
+            {"verdict": "approved", "comments": [], "summary": "ok"},
+        ]
+
+        intake = IntakeContext(spec="Build an API", plan="Step 1")
+        job = create_job("W-1", "My App", intake)
+
+        def launch(task):  # type: ignore[no-untyped-def]
+            return task.id
+
+        def wait(handle):  # type: ignore[no-untyped-def]
+            return (True, {"status": "completed"})
+
+        result = execute_job(job, invoker, task_launcher=launch, task_checker=wait)
+        assert result.status == JobStatus.COMPLETED
+        # task_results populated from DAG
+        assert "T-1" in result.task_results
+        assert "T-2" in result.task_results
+        # Progress reflects completed tasks
+        completed, total = result.progress
+        assert total == 2
+        assert completed == 2
+
+
+# ---------------------------------------------------------------------------
+# Shared state machine usage
+# ---------------------------------------------------------------------------
+
+
+class TestSharedStateMachine:
+    def test_transition_uses_shared_table(self) -> None:
+        """transition_job should use the shared JOB_TRANSITIONS from models.state."""
+        from devteam.models.state import JOB_TRANSITIONS
+
+        # Verify the shared table includes PLANNING->EXECUTING (small fix)
+        assert JobStatus.EXECUTING in JOB_TRANSITIONS[JobStatus.PLANNING]
+        # Verify the shared table includes EXECUTING->COMPLETED (research)
+        assert JobStatus.COMPLETED in JOB_TRANSITIONS[JobStatus.EXECUTING]
+        # Verify the shared table includes REVIEWING->EXECUTING (revision)
+        assert JobStatus.EXECUTING in JOB_TRANSITIONS[JobStatus.REVIEWING]
+
+    def test_transition_job_raises_on_invalid(self) -> None:
+        """transition_job wraps InvalidTransitionError as ValueError."""
+        job = Job(id="W-1", title="Test", status=JobStatus.COMPLETED)
+        with pytest.raises(ValueError, match="Invalid"):
+            transition_job(job, JobStatus.PLANNING)

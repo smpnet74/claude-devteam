@@ -3,11 +3,19 @@
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
 from typer.testing import CliRunner
 
 from devteam.cli.main import app
+import devteam.cli.commands.job_cmd as job_cmd_mod
 
 runner = CliRunner()
+
+
+@pytest.fixture(autouse=True)
+def _reset_job_store() -> None:
+    """Reset the module-level singleton store before each test."""
+    job_cmd_mod._store = None
 
 
 class TestCLIHelp:
@@ -123,41 +131,58 @@ class TestJobCommands:
         assert result.exit_code == 0
         assert "spec" in result.output.lower() or "plan" in result.output.lower()
 
-    def test_start_stub(self) -> None:
-        result = runner.invoke(app, ["start", "--spec", "/tmp/spec.md", "--plan", "/tmp/plan.md"])
+    def test_start_creates_job_with_spec(self) -> None:
+        result = runner.invoke(app, ["start", "--spec", "Build an API"])
         assert result.exit_code == 0
-        assert "not yet implemented" in result.output.lower()
+        assert "W-1" in result.output
+        assert "created" in result.output
 
     def test_start_with_plan_only(self) -> None:
-        result = runner.invoke(app, ["start", "--plan", "/tmp/plan.md"])
+        result = runner.invoke(app, ["start", "--plan", "Step 1: build it"])
         assert result.exit_code == 0
-        assert "not yet implemented" in result.output.lower()
+        assert "W-1" in result.output
 
     def test_start_with_prompt(self) -> None:
         result = runner.invoke(app, ["start", "--prompt", "Fix the bug"])
         assert result.exit_code == 0
-        assert "not yet implemented" in result.output.lower()
+        assert "W-1" in result.output
 
     def test_start_with_issue(self) -> None:
-        result = runner.invoke(app, ["start", "--issue", "https://github.com/org/repo/issues/42"])
+        result = runner.invoke(
+            app, ["start", "--issue", "https://github.com/org/repo/issues/42"]
+        )
         assert result.exit_code == 0
-        assert "not yet implemented" in result.output.lower()
+        assert "W-1" in result.output
 
-    def test_status_stub(self) -> None:
+    def test_start_no_args_exits_1(self) -> None:
+        result = runner.invoke(app, ["start"])
+        assert result.exit_code == 1
+
+    def test_start_sequential_ids(self) -> None:
+        runner.invoke(app, ["start", "--prompt", "first"])
+        result = runner.invoke(app, ["start", "--prompt", "second"])
+        assert result.exit_code == 0
+        assert "W-2" in result.output
+
+    def test_status_no_jobs(self) -> None:
         result = runner.invoke(app, ["status"])
         assert result.exit_code == 0
+        assert "no active jobs" in result.output.lower()
 
     def test_status_with_job_id(self) -> None:
+        runner.invoke(app, ["start", "--prompt", "test"])
         result = runner.invoke(app, ["status", "W-1"])
         assert result.exit_code == 0
+        assert "W-1" in result.output
 
-    def test_status_with_task_id(self) -> None:
-        result = runner.invoke(app, ["status", "W-1/T-3"])
-        assert result.exit_code == 0
+    def test_status_nonexistent_job(self) -> None:
+        result = runner.invoke(app, ["status", "W-99"])
+        assert result.exit_code == 1
 
     def test_status_questions_flag(self) -> None:
         result = runner.invoke(app, ["status", "--questions"])
         assert result.exit_code == 0
+        assert "no pending questions" in result.output.lower()
 
     def test_stop_stub(self) -> None:
         result = runner.invoke(app, ["stop"])
@@ -178,13 +203,74 @@ class TestJobCommands:
         assert result.exit_code == 0
         assert "not yet implemented" in result.output.lower()
 
-    def test_cancel_stub(self) -> None:
+    def test_cancel_existing_job(self) -> None:
+        runner.invoke(app, ["start", "--prompt", "test"])
         result = runner.invoke(app, ["cancel", "W-1"])
+        assert result.exit_code == 0
+        assert "canceled" in result.output.lower()
+
+    def test_cancel_nonexistent_job(self) -> None:
+        result = runner.invoke(app, ["cancel", "W-99"])
+        assert result.exit_code == 1
+        assert "not found" in result.output.lower()
+
+    def test_cancel_revert_merged(self) -> None:
+        runner.invoke(app, ["start", "--prompt", "test"])
+        result = runner.invoke(app, ["cancel", "W-1", "--revert-merged"])
         assert result.exit_code == 0
         assert "not yet implemented" in result.output.lower()
 
-    def test_cancel_revert_merged(self) -> None:
-        result = runner.invoke(app, ["cancel", "W-1", "--revert-merged"])
+
+class TestCommentCommand:
+    def test_comment_on_task(self) -> None:
+        runner.invoke(app, ["start", "--prompt", "test"])
+        result = runner.invoke(app, ["comment", "W-1/T-3", "Use PostgreSQL"])
+        assert result.exit_code == 0
+        assert "comment added" in result.output.lower()
+
+    def test_comment_shorthand(self) -> None:
+        runner.invoke(app, ["start", "--prompt", "test"])
+        result = runner.invoke(app, ["comment", "T-3", "feedback"])
+        assert result.exit_code == 0
+
+    def test_comment_nonexistent_target(self) -> None:
+        result = runner.invoke(app, ["comment", "W-99/T-1", "feedback"])
+        assert result.exit_code == 1
+
+    def test_comment_help(self) -> None:
+        result = runner.invoke(app, ["comment", "--help"])
+        assert result.exit_code == 0
+
+
+class TestAnswerCommand:
+    def test_answer_nonexistent_question(self) -> None:
+        result = runner.invoke(app, ["answer", "Q-99", "Use Redis"])
+        assert result.exit_code == 1
+        assert "not found" in result.output.lower()
+
+    def test_answer_existing_question(self) -> None:
+        from devteam.orchestrator.cli_bridge import QuestionTracker
+        from devteam.orchestrator.schemas import QuestionRecord, QuestionType
+
+        # Manually seed a question in the store
+        store = job_cmd_mod._get_store()
+        q = QuestionTracker(
+            id="Q-1",
+            task_id="T-2",
+            job_id="W-1",
+            record=QuestionRecord(
+                question="Redis or Memcached?",
+                question_type=QuestionType.TECHNICAL,
+            ),
+        )
+        store.save_question(q)
+
+        result = runner.invoke(app, ["answer", "Q-1", "Use Redis"])
+        assert result.exit_code == 0
+        assert "answer recorded" in result.output.lower()
+
+    def test_answer_help(self) -> None:
+        result = runner.invoke(app, ["answer", "--help"])
         assert result.exit_code == 0
 
 
