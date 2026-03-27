@@ -41,7 +41,12 @@ def cancel_command(
     ),
 ) -> None:
     """Cancel a job and clean up all worktrees, branches, and PRs."""
-    result = send_cancel_request(job_id)
+    # NOTE: revert_merged will be passed to daemon when wired up
+    try:
+        result = send_cancel_request(job_id)
+    except NotImplementedError:
+        typer.echo("Error: daemon not available (not yet implemented)", err=True)
+        raise typer.Exit(code=1)
 
     if not result.get("success"):
         typer.echo(f"Error: {result.get('error', 'Unknown error')}", err=True)
@@ -79,7 +84,11 @@ def merge_command(
     Verifies all checks passed before merging. Will not force-merge
     a failing PR.
     """
-    result = send_merge_request(pr_ref)
+    try:
+        result = send_merge_request(pr_ref)
+    except NotImplementedError:
+        typer.echo("Error: daemon not available (not yet implemented)", err=True)
+        raise typer.Exit(code=1)
 
     if not result.get("success"):
         error = result.get("error", "Unknown error")
@@ -103,7 +112,11 @@ def takeover_command(
 
     After editing, commit your changes and run ``devteam handback``.
     """
-    result = send_takeover_request(task_ref)
+    try:
+        result = send_takeover_request(task_ref)
+    except NotImplementedError:
+        typer.echo("Error: daemon not available (not yet implemented)", err=True)
+        raise typer.Exit(code=1)
 
     if not result.get("success"):
         typer.echo(f"Error: {result.get('error', 'Unknown error')}", err=True)
@@ -128,7 +141,11 @@ def handback_command(
     - No force pushes detected
     - Changed files within expected scope
     """
-    result = send_handback_request(task_ref)
+    try:
+        result = send_handback_request(task_ref)
+    except NotImplementedError:
+        typer.echo("Error: daemon not available (not yet implemented)", err=True)
+        raise typer.Exit(code=1)
 
     if not result.get("success"):
         error = result.get("error", "Unknown error")
