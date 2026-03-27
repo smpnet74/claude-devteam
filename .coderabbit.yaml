@@ -80,23 +80,23 @@ reviews:
 
     - path: "src/devteam/daemon/**"
       instructions: >
-        FastAPI daemon on localhost:7432 with singleton PID-file locking. Verify graceful shutdown, signal handling, and that the
-        daemon.pid/daemon.port files are cleaned up on stop. Check generation-aware cleanup guards pid ownership before unlinking.
+        FastAPI daemon with singleton PID locking. Verify graceful shutdown and that control files are cleaned up on stop. Check that
+        cleanup never removes files belonging to a different process. Validate all endpoints return proper error codes.
 
     - path: "src/devteam/cli/**"
       instructions: >
-        Typer CLI communicates with daemon over HTTP (httpx). Verify all commands handle daemon-not-running gracefully. Check that
-        read-only commands (status, trace) can query SQLite directly without a running daemon.
+        Typer CLI commands. Verify no raw tracebacks reach the user — all exceptions must produce friendly messages. Check that
+        unimplemented features fail gracefully. Validate that commands match their documented help text.
 
     - path: "src/devteam/orchestrator/**"
       instructions: >
-        DBOS durable workflows. Every side-effecting call must be a @DBOS.step(). Verify crash recovery: replayed steps must not
-        re-execute side effects. Check that workflow functions enforce review chain order (peer before EM, always).
+        Workflow engine. Verify review chain order is enforced structurally (peer before EM). Check revision loops are bounded.
+        Validate invoker errors are wrapped with context. Ensure escalation paths are reachable.
 
     - path: "src/devteam/agents/**"
       instructions: >
-        Agent registry, invoker, and contracts. Verify SDK call uses query(prompt=, options=QueryOptions(...)). Check invoker fails
-        closed on unmapped roles. Verify contract cross-field validators enforce invariants (comments for revision, DAG integrity).
+        Agent registry, invoker, and contracts. Verify unknown roles are rejected (fail closed, not fail open). Check that contract
+        cross-field validators enforce all invariants. Validate agent prompts are actually passed to the SDK.
 
     - path: "src/devteam/templates/**"
       instructions: >
@@ -110,13 +110,13 @@ reviews:
 
     - path: "src/devteam/git/**"
       instructions: >
-        Git lifecycle: worktrees, branches, PRs, forks. Every side-effecting operation must be idempotent on retry (check-before-act
-        pattern). Verify cleanup removes worktrees, branches, and closes PRs. Check fork detection logic.
+        Git lifecycle. Every operation must be idempotent on retry. Errors from external CLIs (git, gh) must not be silently
+        swallowed — distinguish "not found" from real failures. Verify fork workflows don't assume single-owner repos.
 
     - path: "src/devteam/config/**"
       instructions: >
-        Configuration from ~/.devteam/config.toml (global) merged with per-project devteam.toml. Verify push_to_main is always forced
-        to "never" regardless of config. Check that project settings properly override global defaults via exclude_unset merge.
+        Configuration from TOML files with global/project merge. Verify push_to_main is always forced to "never" regardless of config.
+        Check that explicitly set project values override global defaults even when the value matches the default.
 
     - path: "tests/**"
       instructions: >
@@ -169,11 +169,11 @@ reviews:
         instructions: >
           If models/entities.py or models/state.py changed, verify all state transitions are tested for both valid and invalid paths.
           Check that no code bypasses the validated transition methods to set status directly.
-      - name: "DBOS Step Coverage"
+      - name: "Side Effect Isolation"
         mode: "warning"
         instructions: >
-          If orchestrator/ changed, verify every external side effect (git operations, GitHub API calls, agent invocations) is wrapped
-          in a @DBOS.step() decorator. Unwrapped side effects break crash recovery.
+          If orchestrator/ changed, verify external side effects (agent calls, git ops) are isolated in separate functions that can
+          be individually retried or mocked. Check that workflow functions do not mix business logic with side effects.
       - name: "Idempotent Side Effects"
         mode: "warning"
         instructions: >
