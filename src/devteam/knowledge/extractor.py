@@ -85,9 +85,11 @@ class KnowledgeExtractor:
         result = PersistResult()
 
         for entry in entries:
-            # Step 1: Secret scanning
+            # Step 1: Secret scanning (content AND summary)
             try:
                 scan_for_secrets(entry.content)
+                if entry.summary:
+                    scan_for_secrets(entry.summary)
             except SecretDetectedError as e:
                 logger.warning(
                     "Knowledge entry rejected (secret detected): %s -- %s",
@@ -97,8 +99,15 @@ class KnowledgeExtractor:
                 result.rejected += 1
                 continue
 
-            # Step 2: Determine sharing scope
-            sharing = determine_sharing_scope(entry.tags, entry.content)
+            # Step 2: Use the scope from the extraction result as authoritative.
+            # The agent assigned "process" or "project"; fall back to tag-based
+            # heuristic only when scope is somehow missing.
+            if entry.scope == "process":
+                sharing = SharingScope.SHARED
+            elif entry.scope == "project":
+                sharing = SharingScope.PROJECT
+            else:
+                sharing = determine_sharing_scope(entry.tags, entry.content)
 
             # Step 3: Generate embedding
             try:

@@ -162,3 +162,46 @@ class TestKnowledgeExtractor:
         )
         stats = await mock_store.get_stats_detailed()
         assert stats["by_sharing"].get("shared", 0) == 1
+
+    async def test_scope_wins_over_tags_when_they_disagree(self, extractor, mock_store):
+        """When entry.scope and tags disagree, scope should be authoritative."""
+        entries = [
+            ExtractedEntry(
+                content="Use shared CI templates across all repos",
+                summary="Shared CI templates",
+                tags=["project", "ci"],  # tags say "project"
+                scope="process",          # scope says "process" (-> shared)
+            ),
+        ]
+        result = await extractor.persist_entries(
+            entries=entries,
+            agent_role="devops_engineer",
+            project="myapp",
+            task_id="T-scope",
+        )
+        assert result.persisted == 1
+        stats = await mock_store.get_stats_detailed()
+        # scope="process" should produce sharing="shared", despite "project" tag
+        assert stats["by_sharing"].get("shared", 0) == 1
+        assert stats["by_sharing"].get("project", 0) == 0
+
+    async def test_secret_in_summary_is_rejected(self, extractor, mock_store):
+        """Entries with secrets in the summary (not content) should be rejected."""
+        entries = [
+            ExtractedEntry(
+                content="We use a token for CI authentication",
+                summary='CI token: secret = "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"',
+                tags=["project"],
+                scope="project",
+            ),
+        ]
+        result = await extractor.persist_entries(
+            entries=entries,
+            agent_role="backend_engineer",
+            project="myapp",
+            task_id="T-secret-summary",
+        )
+        assert result.rejected == 1
+        assert result.persisted == 0
+        stats = await mock_store.get_stats()
+        assert stats["total"] == 0

@@ -111,6 +111,22 @@ class TestMemoryIndexBuilder:
         # Should show counts like "(2 entries)"
         assert "entr" in index.lower()
 
+    async def test_index_uses_store_list_entries(self, store_with_knowledge):
+        """Index builder should go through store.list_entries, not raw db.query."""
+        builder = MemoryIndexBuilder(store_with_knowledge)
+        # Patch list_entries to verify it is called
+        original = store_with_knowledge.list_entries
+        call_args: list = []
+
+        async def tracking_list_entries(**kwargs):
+            call_args.append(kwargs)
+            return await original(**kwargs)
+
+        store_with_knowledge.list_entries = tracking_list_entries
+        await builder.build(role="backend_engineer", project="myapp")
+        assert len(call_args) == 1, "Expected list_entries to be called exactly once"
+        assert call_args[0].get("project") == "myapp"
+
     async def test_index_stays_bounded_with_many_entries(self):
         """Index topics per section are capped at 10 even with many entries."""
         s = KnowledgeStore("mem://")

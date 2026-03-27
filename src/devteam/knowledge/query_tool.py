@@ -19,8 +19,16 @@ _ROLE_DOMAIN_TAGS: dict[str, list[str]] = {
     "frontend_engineer": ["frontend", "ui", "css"],
     "devops_engineer": ["devops", "ci", "deployment"],
     "data_engineer": ["data", "pipeline", "etl"],
-    "cloud_engineer": ["cloud", "infra", "platform"],
-    "qa_engineer": ["testing", "qa", "e2e"],
+    "infra_engineer": ["infra", "infrastructure", "networking"],
+    "tooling_engineer": ["tooling", "build", "automation"],
+    "cloud_engineer": ["cloud", "aws", "gcp", "azure"],
+    "chief_architect": ["architecture", "design", "system"],
+    "em_team_a": ["process", "team", "management"],
+    "em_team_b": ["process", "team", "management"],
+    "planner_researcher_a": ["research", "planning", "analysis"],
+    "planner_researcher_b": ["research", "planning", "analysis"],
+    "tech_writer": ["documentation", "docs", "writing"],
+    "qa_engineer": ["testing", "quality", "validation"],
     "security_engineer": ["security", "auth", "encryption"],
 }
 

@@ -59,27 +59,7 @@ class MemoryIndexBuilder:
 
     async def _fetch_relevant_entries(self, role: str, project: str) -> list[dict[str, Any]]:
         """Fetch entries visible to this role/project combination."""
-        result = await self.store.db.query(
-            """
-            SELECT summary, tags, sharing, project, verified, created_at
-            FROM knowledge
-            WHERE sharing = "shared"
-               OR project = $project
-            ORDER BY created_at DESC
-            LIMIT 200
-            """,
-            {"project": project},
-        )
-        # SurrealDB mem:// returns a list of rows directly
-        if isinstance(result, list) and result and isinstance(result[0], dict):
-            # Check if it looks like a wrapped response or direct rows
-            if "result" in result[0] and len(result) == 1:
-                rows = result[0]["result"]
-            else:
-                rows = result
-        else:
-            rows = result
-        return rows or []
+        return await self.store.list_entries(project=project, limit=200)
 
     def _group_entries(
         self,

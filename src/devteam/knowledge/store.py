@@ -186,6 +186,54 @@ class KnowledgeStore:
         )
         return count
 
+    async def list_entries(
+        self,
+        sharing: str | None = None,
+        project: str | None = None,
+        limit: int = 200,
+    ) -> list[dict[str, Any]]:
+        """List knowledge entries with optional filters.
+
+        Used by the memory index builder to fetch entries without reaching
+        through to the raw database connection.
+
+        Args:
+            sharing: Filter by sharing scope (``"shared"`` or ``"project"``).
+            project: Include shared entries and project-scoped entries for this project.
+            limit: Maximum number of entries to return.
+
+        Returns:
+            List of entry dicts, ordered by created_at descending.
+        """
+        filters: list[str] = []
+        params: dict[str, Any] = {}
+
+        if sharing:
+            filters.append("sharing = $sharing")
+            params["sharing"] = sharing
+        elif project:
+            filters.append('(sharing = "shared" OR project = $project)')
+            params["project"] = project
+
+        where_clause = f"WHERE {' AND '.join(filters)}" if filters else ""
+        query = f"""
+            SELECT summary, tags, sharing, project, verified, created_at
+            FROM knowledge
+            {where_clause}
+            ORDER BY created_at DESC
+            LIMIT {limit}
+        """
+        result = await self.db.query(query, params)
+        # SurrealDB mem:// returns a list of rows directly
+        if isinstance(result, list) and result and isinstance(result[0], dict):
+            if "result" in result[0] and len(result) == 1:
+                rows = result[0]["result"]
+            else:
+                rows = result
+        else:
+            rows = result
+        return rows or []
+
     async def get_stats(self) -> dict[str, Any]:
         """Get knowledge base statistics (total count)."""
         rows = await self.db.query("SELECT count() AS total FROM knowledge GROUP ALL")
