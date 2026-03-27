@@ -40,11 +40,18 @@ class TestCheckPushAccess:
             mock_gh.return_value = {"permissions": {"push": False}}
             assert check_push_access("org/repo") is False
 
-    def test_api_error_returns_false(self) -> None:
-        """Returns False on API errors (repo not found, etc)."""
+    def test_api_error_propagates(self) -> None:
+        """GhError propagates on API failures (auth, network, etc)."""
         with patch("devteam.git.fork.gh_run") as mock_gh:
-            mock_gh.side_effect = GhError(["api"], 1, "Not Found")
-            assert check_push_access("org/private-repo") is False
+            mock_gh.side_effect = GhError(["api"], 1, "auth required")
+            with pytest.raises(GhError, match="auth required"):
+                check_push_access("org/private-repo")
+
+    def test_404_returns_false(self) -> None:
+        """Returns False when the repo is not found (404)."""
+        with patch("devteam.git.fork.gh_run") as mock_gh:
+            mock_gh.side_effect = GhError(["api"], 1, "HTTP 404: Not Found")
+            assert check_push_access("org/nonexistent") is False
 
     def test_empty_nwo_raises(self) -> None:
         """Empty repo NWO raises ValueError."""
@@ -110,12 +117,27 @@ class TestCreateFork:
     def test_create_fork(self) -> None:
         """Creates a fork and returns the fork NWO."""
         with patch("devteam.git.fork.gh_run") as mock_gh:
-            with patch("devteam.git.fork.find_existing_fork", return_value="myuser/repo"):
+            # find_existing_fork returns None first (no existing fork), then "myuser/repo" (after creation)
+            with patch(
+                "devteam.git.fork.find_existing_fork",
+                side_effect=[None, "myuser/repo"],
+            ):
                 result = create_fork("org", "repo")
                 assert result == "myuser/repo"
                 mock_gh.assert_called_once_with(
                     ["repo", "fork", "org/repo", "--clone=false"],
                 )
+
+    def test_create_fork_idempotent(self) -> None:
+        """Returns existing fork without calling gh repo fork."""
+        with patch("devteam.git.fork.gh_run") as mock_gh:
+            with patch(
+                "devteam.git.fork.find_existing_fork",
+                return_value="myuser/repo",
+            ):
+                result = create_fork("org", "repo")
+                assert result == "myuser/repo"
+                mock_gh.assert_not_called()
 
     def test_empty_owner_raises(self) -> None:
         """Empty owner raises ValueError."""
@@ -163,14 +185,66 @@ class TestEnsureFork:
 
 
 class TestSetupForkRemotes:
-    def test_setup_remotes(self, tmp_path: Path) -> None:
-        """Configures origin as fork, upstream as original."""
-        with patch("devteam.git.fork.git_run") as mock_git:
+    def test_setup_remotes_https(self, tmp_path: Path) -> None:
+        """Configures origin as fork, upstream as original using HTTPS."""
+
+        def side_effect(args: list[str], cwd: Path | None = None) -> str:
+            if args == ["remote", "get-url", "origin"]:
+                return "https://github.com/org/repo.git"
+            return ""
+
+        with patch("devteam.git.fork.git_run", side_effect=side_effect) as mock_git:
             setup_fork_remotes(tmp_path, "org/repo", "myuser/repo")
             calls = mock_git.call_args_list
-            # Should set origin to the fork and upstream to original
-            assert any("set-url" in str(c) and "myuser/repo" in str(c) for c in calls)
-            assert any("upstream" in str(c) and "org/repo" in str(c) for c in calls)
+            # Should use HTTPS URLs
+            assert any("https://github.com/myuser/repo.git" in str(c) for c in calls)
+            assert any(
+                "https://github.com/org/repo.git" in str(c) and "upstream" in str(c) for c in calls
+            )
+
+    def test_setup_remotes_ssh(self, tmp_path: Path) -> None:
+        """Preserves SSH scheme when origin uses SSH."""
+
+        def side_effect(args: list[str], cwd: Path | None = None) -> str:
+            if args == ["remote", "get-url", "origin"]:
+                return "git@github.com:org/repo.git"
+            return ""
+
+        with patch("devteam.git.fork.git_run", side_effect=side_effect) as mock_git:
+            setup_fork_remotes(tmp_path, "org/repo", "myuser/repo")
+            calls = mock_git.call_args_list
+            # Should use SSH URLs
+            assert any("git@github.com:myuser/repo.git" in str(c) for c in calls)
+            assert any(
+                "git@github.com:org/repo.git" in str(c) and "upstream" in str(c) for c in calls
+            )
+
+    def test_setup_remotes_ssh_protocol(self, tmp_path: Path) -> None:
+        """Preserves SSH scheme when origin uses ssh:// protocol."""
+
+        def side_effect(args: list[str], cwd: Path | None = None) -> str:
+            if args == ["remote", "get-url", "origin"]:
+                return "ssh://git@github.com/org/repo.git"
+            return ""
+
+        with patch("devteam.git.fork.git_run", side_effect=side_effect) as mock_git:
+            setup_fork_remotes(tmp_path, "org/repo", "myuser/repo")
+            calls = mock_git.call_args_list
+            # Should use SSH URLs (git@ shorthand)
+            assert any("git@github.com:myuser/repo.git" in str(c) for c in calls)
+
+    def test_setup_remotes_no_origin_defaults_https(self, tmp_path: Path) -> None:
+        """Defaults to HTTPS when origin remote doesn't exist."""
+
+        def side_effect(args: list[str], cwd: Path | None = None) -> str:
+            if args == ["remote", "get-url", "origin"]:
+                raise GitError(args, 1, "No such remote 'origin'")
+            return ""
+
+        with patch("devteam.git.fork.git_run", side_effect=side_effect) as mock_git:
+            setup_fork_remotes(tmp_path, "org/repo", "myuser/repo")
+            calls = mock_git.call_args_list
+            assert any("https://github.com/myuser/repo.git" in str(c) for c in calls)
 
     def test_setup_remotes_adds_on_set_url_failure(self, tmp_path: Path) -> None:
         """Falls back to remote add when set-url fails."""
@@ -181,14 +255,16 @@ class TestSetupForkRemotes:
         def side_effect(args: list[str], cwd: Path | None = None) -> str:
             nonlocal call_count
             call_count += 1
+            if args == ["remote", "get-url", "origin"]:
+                return "https://github.com/org/repo.git"
             if "set-url" in args:
                 raise GitError(args, 1, "No such remote")
             return ""
 
         with patch("devteam.git.fork.git_run", side_effect=side_effect):
             setup_fork_remotes(tmp_path, "org/repo", "myuser/repo")
-        # Should have called set-url twice (failed) then add twice (succeeded)
-        assert call_count == 4
+        # get-url (1) + set-url origin (2, fails) + add origin (3) + set-url upstream (4, fails) + add upstream (5)
+        assert call_count == 5
 
     def test_empty_upstream_raises(self, tmp_path: Path) -> None:
         """Empty upstream NWO raises ValueError."""
@@ -204,6 +280,8 @@ class TestSetupForkRemotes:
         """Non-'No such remote' errors propagate instead of falling back."""
 
         def side_effect(args: list[str], cwd: Path | None = None) -> str:
+            if args == ["remote", "get-url", "origin"]:
+                return "https://github.com/org/repo.git"
             if "set-url" in args:
                 raise GitError(args, 128, "fatal: unable to access remote")
             return ""

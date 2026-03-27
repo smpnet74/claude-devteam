@@ -59,6 +59,16 @@ class TestGitRun:
         assert err.returncode != 0
         assert isinstance(err.stderr, str)
 
+    def test_oserror_wrapped_as_git_error(self) -> None:
+        """OSError (e.g. git not installed) is wrapped as GitError."""
+        with patch("devteam.git.helpers.subprocess.run") as mock_run:
+            mock_run.side_effect = FileNotFoundError("No such file or directory: 'git'")
+            with pytest.raises(GitError) as exc_info:
+                git_run(["status"])
+            err = exc_info.value
+            assert err.returncode == -1
+            assert "Failed to run git" in err.stderr
+
 
 class TestGhRun:
     def test_success_mocked(self) -> None:
@@ -143,6 +153,16 @@ class TestGhRun:
             with pytest.raises(GhError, match="Failed to parse JSON"):
                 gh_run(["api", "repos/x/y"], parse_json=True)
 
+    def test_oserror_wrapped_as_gh_error(self) -> None:
+        """OSError (e.g. gh not installed) is wrapped as GhError."""
+        with patch("devteam.git.helpers.subprocess.run") as mock_run:
+            mock_run.side_effect = FileNotFoundError("No such file or directory: 'gh'")
+            with pytest.raises(GhError) as exc_info:
+                gh_run(["pr", "list"])
+            err = exc_info.value
+            assert err.returncode == -1
+            assert "Failed to run gh" in err.stderr
+
 
 class TestGetRepoRoot:
     def test_returns_repo_root(self, git_repo: Path) -> None:
@@ -204,6 +224,38 @@ class TestGetDefaultBranch:
         """get_default_branch returns main or master."""
         branch = get_default_branch(cwd=git_repo)
         assert branch in ("main", "master")
+
+    def test_uses_symbolic_ref_when_available(self) -> None:
+        """get_default_branch prefers remote HEAD via symbolic-ref."""
+        with patch("devteam.git.helpers.git_run") as mock_git:
+            mock_git.return_value = "refs/remotes/origin/HEAD -> refs/remotes/origin/develop"
+            # symbolic-ref returns a single ref like "refs/remotes/origin/develop"
+            # But actually git symbolic-ref returns just the ref path
+            mock_git.return_value = "refs/remotes/origin/develop"
+            branch = get_default_branch(cwd="/fake")
+            assert branch == "develop"
+            mock_git.assert_called_once_with(
+                ["symbolic-ref", "refs/remotes/origin/HEAD"], cwd="/fake"
+            )
+
+    def test_falls_back_to_local_branches(self) -> None:
+        """Falls back to checking local branches when symbolic-ref fails."""
+        call_count = 0
+
+        def side_effect(args: list[str], cwd=None) -> str:
+            nonlocal call_count
+            call_count += 1
+            if args == ["symbolic-ref", "refs/remotes/origin/HEAD"]:
+                raise GitError(args, 1, "not a symbolic ref")
+            if args == ["rev-parse", "--verify", "refs/heads/main"]:
+                raise GitError(args, 1, "not found")
+            if args == ["rev-parse", "--verify", "refs/heads/master"]:
+                return "abc123"
+            return ""
+
+        with patch("devteam.git.helpers.git_run", side_effect=side_effect):
+            branch = get_default_branch(cwd="/fake")
+            assert branch == "master"
 
     def test_returns_main_fallback(self, tmp_path: Path) -> None:
         """get_default_branch falls back to 'main' if neither exists."""

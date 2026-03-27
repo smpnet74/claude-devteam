@@ -56,12 +56,15 @@ def git_run(
     if not args:
         raise ValueError("args must not be empty")
 
-    result = subprocess.run(
-        ["git", *args],
-        cwd=cwd,
-        capture_output=True,
-        text=True,
-    )
+    try:
+        result = subprocess.run(
+            ["git", *args],
+            cwd=cwd,
+            capture_output=True,
+            text=True,
+        )
+    except OSError as e:
+        raise GitError(args, -1, f"Failed to run git: {e}") from e
     if check and result.returncode != 0:
         raise GitError(args, result.returncode, result.stderr.strip())
     return result.stdout.strip()
@@ -91,12 +94,15 @@ def gh_run(
     if not args:
         raise ValueError("args must not be empty")
 
-    result = subprocess.run(
-        ["gh", *args],
-        cwd=cwd,
-        capture_output=True,
-        text=True,
-    )
+    try:
+        result = subprocess.run(
+            ["gh", *args],
+            cwd=cwd,
+            capture_output=True,
+            text=True,
+        )
+    except OSError as e:
+        raise GhError(args, -1, f"Failed to run gh: {e}") from e
     if check and result.returncode != 0:
         raise GhError(args, result.returncode, result.stderr.strip())
     stdout = result.stdout.strip()
@@ -147,24 +153,32 @@ def get_current_branch(cwd: Path | str | None = None) -> str:
 
 
 def get_default_branch(cwd: Path | str | None = None) -> str:
-    """Return the default branch name (main or master).
+    """Get the default branch name from the remote, falling back to local detection.
 
-    Checks local branches. Falls back to 'main' if neither exists.
+    Strategy:
+    1. Read from remote HEAD via symbolic-ref (most accurate).
+    2. Fallback: check if common branch names exist locally.
+    3. Last resort: return 'main'.
 
     Args:
         cwd: Working directory inside the repo.
 
     Returns:
-        'main' or 'master'.
+        Default branch name (e.g. 'main', 'master').
     """
+    # Try to read from remote HEAD (most accurate)
     try:
-        git_run(["rev-parse", "--verify", "refs/heads/main"], cwd=cwd)
-        return "main"
+        ref = git_run(["symbolic-ref", "refs/remotes/origin/HEAD"], cwd=cwd)
+        return ref.strip().split("/")[-1]
     except GitError:
         pass
-    try:
-        git_run(["rev-parse", "--verify", "refs/heads/master"], cwd=cwd)
-        return "master"
-    except GitError:
-        pass
-    return "main"
+
+    # Fallback: check common names
+    for name in ("main", "master"):
+        try:
+            git_run(["rev-parse", "--verify", f"refs/heads/{name}"], cwd=cwd)
+            return name
+        except GitError:
+            pass
+
+    return "main"  # last resort default

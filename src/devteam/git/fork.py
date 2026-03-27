@@ -60,9 +60,12 @@ def check_push_access(repo_nwo: str) -> bool:
 
     Returns:
         True if the user can push to the repo.
+        False when permissions.push is False or the repo is not found (404).
 
     Raises:
         ValueError: If repo_nwo is empty or malformed.
+        GhError: If the API call fails for reasons other than 404
+            (auth, network, etc.).
     """
     _validate_nwo(repo_nwo)
 
@@ -71,10 +74,13 @@ def check_push_access(repo_nwo: str) -> bool:
             ["api", f"repos/{repo_nwo}"],
             parse_json=True,
         )
-        permissions = result.get("permissions", {}) if isinstance(result, dict) else {}
-        return permissions.get("push", False)
-    except GhError:
-        return False
+    except GhError as e:
+        # 404 means the repo doesn't exist or the user can't see it -- no push.
+        if "HTTP 404" in e.stderr or "Not Found" in e.stderr:
+            return False
+        raise
+    permissions = result.get("permissions", {}) if isinstance(result, dict) else {}
+    return permissions.get("push", False)
 
 
 def find_existing_fork(upstream_nwo: str) -> str | None:
@@ -118,12 +124,14 @@ def find_existing_fork(upstream_nwo: str) -> str | None:
 def create_fork(owner: str, repo: str) -> str:
     """Create a fork of the given repository.
 
+    Idempotent: if a fork already exists, returns it without re-forking.
+
     Args:
         owner: Repository owner.
         repo: Repository name.
 
     Returns:
-        The 'owner/name' of the newly created fork.
+        The 'owner/name' of the newly created (or existing) fork.
 
     Raises:
         ValueError: If owner or repo is empty.
@@ -134,16 +142,23 @@ def create_fork(owner: str, repo: str) -> str:
     if not repo:
         raise ValueError("repo must not be empty")
 
-    gh_run(["repo", "fork", f"{owner}/{repo}", "--clone=false"])
-    # After forking, find the newly created fork
-    fork_nwo = find_existing_fork(f"{owner}/{repo}")
+    nwo = f"{owner}/{repo}"
+    _validate_nwo(nwo)
+
+    # Idempotent: check if fork already exists
+    existing = find_existing_fork(nwo)
+    if existing:
+        return existing
+
+    gh_run(["repo", "fork", nwo, "--clone=false"])
+
+    # Verify fork was created
+    fork_nwo = find_existing_fork(nwo)
     if fork_nwo is None:
-        # Fallback: gh creates forks under the current user
-        # The fork should exist after creation
         raise GhError(
             ["repo", "fork"],
             1,
-            f"Fork of {owner}/{repo} was created but could not be found",
+            f"Fork of {nwo} was created but could not be found",
         )
     return fork_nwo
 
@@ -225,8 +240,19 @@ def setup_fork_remotes(
     if not fork_nwo:
         raise ValueError("fork_nwo must not be empty")
 
-    fork_url = f"https://github.com/{fork_nwo}.git"
-    upstream_url = f"https://github.com/{upstream_nwo}.git"
+    # Detect existing origin scheme to preserve transport (SSH vs HTTPS)
+    try:
+        current_url = git_run(["remote", "get-url", "origin"], cwd=repo_root).strip()
+        use_ssh = current_url.startswith("git@") or current_url.startswith("ssh://")
+    except GitError:
+        use_ssh = False
+
+    if use_ssh:
+        fork_url = f"git@github.com:{fork_nwo}.git"
+        upstream_url = f"git@github.com:{upstream_nwo}.git"
+    else:
+        fork_url = f"https://github.com/{fork_nwo}.git"
+        upstream_url = f"https://github.com/{upstream_nwo}.git"
 
     # Set origin to the fork
     try:
