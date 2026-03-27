@@ -21,7 +21,7 @@ def register_concurrency_commands(app: typer.Typer) -> None:
     ) -> None:
         """Change the priority of a queued task."""
         try:
-            priority = parse_priority_flag(level)
+            parse_priority_flag(level)  # validate early
         except ValueError as e:
             typer.echo(f"Error: {e}")
             raise typer.Exit(code=1)

@@ -82,19 +82,19 @@ def rate_limit_aware_invoke(
     except RateLimitError as e:
         # Step 3: Set global pause, sleep, conditionally clear, retry
         backoff_seconds = handle_rate_limit_error(
-            db, e, default_backoff=default_backoff,
+            db,
+            e,
+            default_backoff=default_backoff,
         )
         resume_at = set_global_pause(
-            db, seconds=backoff_seconds, reason="rate_limit",
+            db,
+            seconds=backoff_seconds,
+            reason="rate_limit",
         )
         sleep_fn(backoff_seconds)
         # Only clear if our pause is still the active one
         current = get_global_pause(db)
-        if (
-            current is not None
-            and current.resume_at is not None
-            and current.resume_at <= resume_at
-        ):
+        if current is not None and current.resume_at is not None and current.resume_at <= resume_at:
             clear_global_pause(db)
         result = invoke_fn(role=role, task_id=task_id, context=context)
         return result

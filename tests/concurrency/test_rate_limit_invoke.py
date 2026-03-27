@@ -5,7 +5,6 @@ orchestrator correctly sets the global pause, waits, clears, and retries.
 """
 
 import sqlite3
-import time
 from unittest.mock import MagicMock
 
 import pytest
@@ -14,7 +13,6 @@ from devteam.concurrency.rate_limit import (
     is_paused,
     get_global_pause,
     set_global_pause,
-    clear_global_pause,
     DEFAULT_BACKOFF_SECONDS,
 )
 from devteam.concurrency.queue import init_queue_table

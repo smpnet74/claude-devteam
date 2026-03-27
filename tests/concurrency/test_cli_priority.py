@@ -22,6 +22,7 @@ def db(tmp_path):
     conn = sqlite3.connect(db_path)
     init_queue_table(conn)
     from devteam.concurrency.rate_limit import init_pause_table
+
     init_pause_table(conn)
     yield conn
     conn.close()
