@@ -165,7 +165,7 @@ class TestDurableSleepFunction:
             durable_sleep(conn, duration_seconds=10.0, sleep_fn=exploding_sleep)
 
         # pause must be cleared despite the exception
-        assert is_paused(conn) is False
+        assert get_global_pause(conn) is None
 
     def test_durable_sleep_does_not_clear_newer_pause(self, conn):
         """Workflow A's finally must not wipe a longer pause set by workflow B during A's sleep."""
