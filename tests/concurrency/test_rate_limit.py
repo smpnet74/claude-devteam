@@ -116,6 +116,18 @@ class TestHandleRateLimitError:
         seconds = handle_rate_limit_error(db, error)
         assert seconds == 120
 
+    def test_uses_custom_default_backoff(self, db):
+        """Caller can override the default backoff (e.g., from config)."""
+        error = Exception("Rate limit exceeded.")
+        seconds = handle_rate_limit_error(db, error, default_backoff=900)
+        assert seconds == 900
+
+    def test_parsed_value_overrides_custom_default(self, db):
+        """When the error contains a parseable retry-after, the custom default is ignored."""
+        error = Exception("Retry after 300 seconds.")
+        seconds = handle_rate_limit_error(db, error, default_backoff=900)
+        assert seconds == 300
+
 
 class TestMonotonicPause:
     def test_shorter_pause_does_not_overwrite_longer(self, db):

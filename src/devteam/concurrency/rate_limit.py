@@ -117,7 +117,7 @@ def check_pause_before_invoke(conn: sqlite3.Connection) -> PauseCheckResult:
     return PauseCheckResult(paused=True, resume_at=pause.resume_at)
 
 
-def _parse_reset_seconds(error: Exception) -> int | None:
+def _parse_reset_seconds(error_message: str) -> int | None:
     """Extract the reset/retry time in seconds from a rate limit error.
 
     Handles formats:
@@ -125,7 +125,7 @@ def _parse_reset_seconds(error: Exception) -> int | None:
         - "retry-after: 120"
         - "Retry after 1800 seconds."
     """
-    msg = str(error)
+    msg = error_message
     # Pattern: "Retry after N seconds"
     match = re.search(r"[Rr]etry\s+after\s+(\d+)\s+seconds", msg)
     if match:
@@ -140,14 +140,17 @@ def _parse_reset_seconds(error: Exception) -> int | None:
 def handle_rate_limit_error(
     conn: sqlite3.Connection,
     error: Exception,
+    default_backoff: int = DEFAULT_BACKOFF_SECONDS,
 ) -> int:
     """Handle a rate limit error by setting the global pause flag.
 
     Parses the error message to extract the retry time. Falls back to
-    DEFAULT_BACKOFF_SECONDS if the error message can't be parsed.
+    default_backoff (which should come from config) if the error message
+    can't be parsed.
 
     Returns the number of seconds to wait.
     """
-    seconds = _parse_reset_seconds(error) or DEFAULT_BACKOFF_SECONDS
+    parsed = _parse_reset_seconds(str(error))
+    seconds = parsed if parsed is not None else default_backoff
     set_global_pause(conn, seconds=seconds, reason="rate_limit")
     return seconds

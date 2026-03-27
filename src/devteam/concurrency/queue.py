@@ -19,6 +19,8 @@ from dataclasses import dataclass
 from devteam.concurrency.priority import Priority
 from devteam.concurrency.rate_limit import is_paused
 
+_INT_TO_PRIORITY = {p.to_int(): p for p in Priority}
+
 
 # Queue item states
 PENDING = "pending"
@@ -179,7 +181,7 @@ def dequeue_next(
             job_id=row[1],
             task_id=row[2],
             role=row[3],
-            priority=Priority(row[4]),
+            priority=_INT_TO_PRIORITY[row[4]],
             status=ACTIVE,
             enqueued_at=row[6],
         )

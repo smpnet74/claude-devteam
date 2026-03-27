@@ -55,11 +55,16 @@ def durable_sleep(
     if sleep_fn is None:
         sleep_fn = time.sleep
 
+    resume_at = time.time() + duration_seconds
     set_global_pause(conn, seconds=duration_seconds, reason=reason)
     try:
         sleep_fn(duration_seconds)
     finally:
-        clear_global_pause(conn)
+        # Only clear if our pause is still the active one.
+        # A newer/longer pause set by another workflow must not be wiped.
+        current = get_global_pause(conn)
+        if current is None or current.resume_at <= resume_at:
+            clear_global_pause(conn)
 
 
 def check_pending_sleep(conn: sqlite3.Connection) -> PendingSleep | None:
@@ -101,7 +106,10 @@ def resume_sleep(
         if remaining > 0:
             sleep_fn(remaining)
     finally:
-        clear_global_pause(conn)
+        # Only clear if our pause is still the active one.
+        current = get_global_pause(conn)
+        if current is None or current.resume_at <= pending.resume_at:
+            clear_global_pause(conn)
 
 
 def cancel_sleep(conn: sqlite3.Connection) -> None:

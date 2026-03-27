@@ -61,11 +61,51 @@ class QuestionStatus(str, Enum):
 
 
 class Priority(str, Enum):
-    """Job/task priority levels."""
+    """Job/task priority levels.
+
+    String enum for serialization ("high", "normal", "low") with
+    comparison operators and an integer mapping for queue ordering.
+    """
 
     HIGH = "high"
     NORMAL = "normal"
     LOW = "low"
+
+    def to_int(self) -> int:
+        """Integer value for queue/sort ordering. Higher = higher priority."""
+        return {"high": 3, "normal": 2, "low": 1}[self.value]
+
+    @classmethod
+    def from_string(cls, s: str) -> "Priority":
+        """Parse a string like 'high', 'NORMAL', 'Low' into a Priority."""
+        key = s.strip().upper()
+        if key not in cls.__members__:
+            raise ValueError(f"Invalid priority '{s}'. Must be one of: high, normal, low")
+        return cls[key]
+
+    @classmethod
+    def default(cls) -> "Priority":
+        return cls.NORMAL
+
+    def __gt__(self, other: object) -> bool:
+        if not isinstance(other, Priority):
+            return NotImplemented
+        return self.to_int() > other.to_int()
+
+    def __ge__(self, other: object) -> bool:
+        if not isinstance(other, Priority):
+            return NotImplemented
+        return self.to_int() >= other.to_int()
+
+    def __lt__(self, other: object) -> bool:
+        if not isinstance(other, Priority):
+            return NotImplemented
+        return self.to_int() < other.to_int()
+
+    def __le__(self, other: object) -> bool:
+        if not isinstance(other, Priority):
+            return NotImplemented
+        return self.to_int() <= other.to_int()
 
 
 class PRStatus(str, Enum):

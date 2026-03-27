@@ -13,6 +13,8 @@ from devteam.concurrency.durable_sleep import (
     cancel_sleep,
     check_pending_sleep,
     durable_sleep,
+    resume_sleep,
+    PendingSleep,
 )
 from devteam.concurrency.rate_limit import (
     init_pause_table,
@@ -164,3 +166,34 @@ class TestDurableSleepFunction:
 
         # pause must be cleared despite the exception
         assert is_paused(conn) is False
+
+    def test_durable_sleep_does_not_clear_newer_pause(self, conn):
+        """Workflow A's finally must not wipe a longer pause set by workflow B during A's sleep."""
+
+        def sleep_and_set_longer_pause(duration: float) -> None:
+            # Simulate workflow B setting a longer pause while A sleeps
+            set_global_pause(conn, seconds=9999, reason="rate_limit_b")
+
+        # Workflow A sleeps for 10s; during that sleep, B sets a 9999s pause
+        durable_sleep(conn, duration_seconds=10.0, sleep_fn=sleep_and_set_longer_pause)
+
+        # B's pause must still be active
+        assert is_paused(conn) is True
+        pause = get_global_pause(conn)
+        assert pause is not None
+        assert pause.remaining_seconds() > 9000
+
+    def test_resume_sleep_does_not_clear_newer_pause(self, conn):
+        """resume_sleep's finally must not wipe a longer pause set by another workflow."""
+        set_global_pause(conn, seconds=60, reason="original")
+        pending = PendingSleep(resume_at=get_global_pause(conn).resume_at, reason="original")
+
+        def sleep_and_set_longer_pause(duration: float) -> None:
+            set_global_pause(conn, seconds=9999, reason="rate_limit_b")
+
+        resume_sleep(conn, pending, sleep_fn=sleep_and_set_longer_pause)
+
+        assert is_paused(conn) is True
+        pause = get_global_pause(conn)
+        assert pause is not None
+        assert pause.remaining_seconds() > 9000
