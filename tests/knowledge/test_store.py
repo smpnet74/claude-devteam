@@ -5,7 +5,7 @@ import pytest_asyncio
 from unittest.mock import AsyncMock
 
 from devteam.knowledge.embeddings import EMBEDDING_DIMENSIONS
-from devteam.knowledge.store import KnowledgeStore, VALID_RELATIONS
+from devteam.knowledge.store import KnowledgeStore, VALID_RELATIONS, _UPDATABLE_FIELDS
 
 
 @pytest_asyncio.fixture
@@ -324,3 +324,80 @@ class TestGraphRelationships:
 
     async def test_valid_relations_constant(self):
         assert VALID_RELATIONS == {"discovered", "supersedes", "requires", "relates_to"}
+
+
+@pytest.mark.asyncio
+class TestConnectDegradation:
+    async def test_connect_failure_raises_connection_error(self):
+        """Failed connect wraps the underlying exception in ConnectionError."""
+        s = KnowledgeStore("ws://localhost:9999")
+        mock_db = AsyncMock()
+        mock_db.connect.side_effect = OSError("Connection refused")
+        s.db = mock_db
+
+        with pytest.raises(ConnectionError, match="Failed to connect to SurrealDB"):
+            await s.connect()
+        assert not s.is_connected
+
+    async def test_connect_failure_preserves_disconnected_state(self):
+        """After a failed connect, is_connected remains False."""
+        s = KnowledgeStore("ws://localhost:9999")
+        mock_db = AsyncMock()
+        mock_db.connect.side_effect = RuntimeError("boom")
+        s.db = mock_db
+
+        with pytest.raises(ConnectionError):
+            await s.connect()
+        assert s.is_connected is False
+
+
+@pytest.mark.asyncio
+class TestEmptyEmbeddingValidation:
+    async def test_create_entry_rejects_empty_embedding(self, store: KnowledgeStore):
+        """An empty embedding list should fail dimension validation."""
+        with pytest.raises(
+            ValueError, match=f"Embedding must be {EMBEDDING_DIMENSIONS} dimensions, got 0"
+        ):
+            await store.create_entry(
+                content="test",
+                summary="test",
+                tags=[],
+                sharing="shared",
+                project=None,
+                embedding=[],
+            )
+
+
+@pytest.mark.asyncio
+class TestUpdateFieldAllowlist:
+    async def test_update_with_valid_field(self, store: KnowledgeStore):
+        entry_id = await store.create_entry(
+            content="Test content",
+            summary="Test",
+            tags=["process"],
+            sharing="shared",
+            project=None,
+            embedding=[0.1] * 768,
+        )
+        await store.update_entry(entry_id, verified=True)
+        entry = await store.get_entry(entry_id)
+        assert entry is not None
+        assert entry["verified"] is True
+
+    async def test_update_rejects_invalid_field(self, store: KnowledgeStore):
+        entry_id = await store.create_entry(
+            content="Test content",
+            summary="Test",
+            tags=["process"],
+            sharing="shared",
+            project=None,
+            embedding=[0.1] * 768,
+        )
+        with pytest.raises(ValueError, match="Cannot update fields"):
+            await store.update_entry(entry_id, not_a_real_field="evil")
+
+    async def test_updatable_fields_constant(self):
+        assert _UPDATABLE_FIELDS == frozenset({
+            "content", "summary", "tags", "sharing", "project",
+            "embedding", "verified", "source", "access_count",
+        })

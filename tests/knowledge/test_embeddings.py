@@ -129,3 +129,42 @@ class TestOllamaEmbedder:
         ):
             with pytest.raises(EmbeddingError, match="timed out"):
                 await embedder.embed("test")
+
+    @pytest.mark.asyncio
+    async def test_embed_empty_string_raises_value_error(self):
+        """embed() rejects empty strings."""
+        embedder = OllamaEmbedder()
+        with pytest.raises(ValueError, match="Cannot embed empty text"):
+            await embedder.embed("")
+
+    @pytest.mark.asyncio
+    async def test_embed_whitespace_only_raises_value_error(self):
+        """embed() rejects whitespace-only strings."""
+        embedder = OllamaEmbedder()
+        with pytest.raises(ValueError, match="Cannot embed empty text"):
+            await embedder.embed("   \n\t  ")
+
+    @pytest.mark.asyncio
+    async def test_embed_batch_empty_list_raises_value_error(self):
+        """embed_batch() rejects an empty list."""
+        embedder = OllamaEmbedder()
+        with pytest.raises(ValueError, match="Cannot embed empty text list"):
+            await embedder.embed_batch([])
+
+    @pytest.mark.asyncio
+    async def test_malformed_ollama_response_missing_key(self):
+        """Ollama response missing 'embeddings' key raises EmbeddingError."""
+        embedder = OllamaEmbedder()
+        mock_resp = _mock_response({"model": "nomic-embed-text"})
+        with patch.object(embedder._client, "post", AsyncMock(return_value=mock_resp)):
+            with pytest.raises(EmbeddingError, match="Malformed Ollama response"):
+                await embedder.embed("test")
+
+    @pytest.mark.asyncio
+    async def test_malformed_ollama_response_bad_type(self):
+        """Ollama response with non-iterable embeddings raises EmbeddingError."""
+        embedder = OllamaEmbedder()
+        mock_resp = _mock_response({"embeddings": "not-a-list"})
+        with patch.object(embedder._client, "post", AsyncMock(return_value=mock_resp)):
+            with pytest.raises(EmbeddingError, match="Malformed Ollama response"):
+                await embedder.embed("test")

@@ -174,7 +174,7 @@ class TestVectorSearch:
         )
 
         # The superseded entry should be excluded
-        result_ids = [r["id"] for r in results]
+        result_ids = [str(r["id"]) for r in results]
         assert ids[0] not in result_ids
 
         # We should still get 2 results (ids[1] and ids[2]) since

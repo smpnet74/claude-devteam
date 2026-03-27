@@ -47,10 +47,12 @@ class OllamaEmbedder:
             A list of floats (768 dimensions for nomic-embed-text).
 
         Raises:
+            ValueError: If text is empty or whitespace-only.
             EmbeddingError: If Ollama is unavailable or returns an error.
         """
-        result = await self._call_ollama([text])
-        return result[0]
+        if not text or not text.strip():
+            raise ValueError("Cannot embed empty text")
+        return (await self.embed_batch([text]))[0]
 
     async def embed_batch(self, texts: list[str]) -> list[list[float]]:
         """Generate embedding vectors for multiple texts in one call.
@@ -62,8 +64,11 @@ class OllamaEmbedder:
             List of embedding vectors, one per input text.
 
         Raises:
+            ValueError: If texts list is empty.
             EmbeddingError: If Ollama is unavailable or returns an error.
         """
+        if not texts:
+            raise ValueError("Cannot embed empty text list")
         return await self._call_ollama(texts)
 
     async def is_available(self) -> bool:
@@ -95,7 +100,10 @@ class OllamaEmbedder:
             ) from e
 
         data = response.json()
-        return [list(map(float, emb)) for emb in data["embeddings"]]
+        try:
+            return [list(map(float, emb)) for emb in data["embeddings"]]
+        except (KeyError, TypeError, ValueError) as e:
+            raise EmbeddingError(f"Malformed Ollama response: {e}") from e
 
     async def close(self) -> None:
         """Close the underlying HTTP client."""

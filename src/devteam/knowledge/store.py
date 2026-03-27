@@ -29,8 +29,14 @@ SCHEMA_STATEMENTS = [
     "DEFINE FIELD IF NOT EXISTS created_at ON knowledge TYPE datetime",
     "DEFINE FIELD IF NOT EXISTS verified ON knowledge TYPE bool DEFAULT false",
     "DEFINE FIELD IF NOT EXISTS access_count ON knowledge TYPE int DEFAULT 0",
-    "DEFINE INDEX IF NOT EXISTS knowledge_vec ON knowledge FIELDS embedding HNSW DIMENSION 768 DIST COSINE",
+    f"DEFINE INDEX IF NOT EXISTS knowledge_vec ON knowledge FIELDS embedding HNSW DIMENSION {EMBEDDING_DIMENSIONS} DIST COSINE",
 ]
+
+
+_UPDATABLE_FIELDS = frozenset({
+    "content", "summary", "tags", "sharing", "project",
+    "embedding", "verified", "source", "access_count",
+})
 
 
 class KnowledgeStore:
@@ -71,16 +77,20 @@ class KnowledgeStore:
         """
         if self._connected:
             return
-        await self.db.connect()
+        try:
+            await self.db.connect()
 
-        # Authenticate if credentials provided (required for ws:// connections)
-        if username and password:
-            await self.db.signin({"username": username, "password": password})
+            # Authenticate if credentials provided (required for ws:// connections)
+            if username and password:
+                await self.db.signin({"username": username, "password": password})
 
-        await self.db.use(namespace, database)
-        await self._init_schema()
-        self._connected = True
-        logger.info("Knowledge store connected: %s", self.url)
+            await self.db.use(namespace, database)
+            await self._init_schema()
+            self._connected = True
+            logger.info("Knowledge store connected: %s", self.url)
+        except Exception as e:
+            self._connected = False
+            raise ConnectionError(f"Failed to connect to SurrealDB at {self.url}: {e}") from e
 
     async def close(self) -> None:
         """Close the SurrealDB connection."""
@@ -116,7 +126,7 @@ class KnowledgeStore:
             raise ValueError(f"sharing must be 'shared' or 'project', got: {sharing!r}")
         if sharing == "project" and not project:
             raise ValueError("project must be set when sharing='project'")
-        if embedding and len(embedding) != EMBEDDING_DIMENSIONS:
+        if embedding is not None and len(embedding) != EMBEDDING_DIMENSIONS:
             raise ValueError(
                 f"Embedding must be {EMBEDDING_DIMENSIONS} dimensions, got {len(embedding)}"
             )
@@ -156,6 +166,9 @@ class KnowledgeStore:
         """Update specific fields on a knowledge entry."""
         if not fields:
             return
+        invalid = set(fields) - _UPDATABLE_FIELDS
+        if invalid:
+            raise ValueError(f"Cannot update fields: {invalid}")
         rid = self._parse_record_id(entry_id)
         set_clauses = ", ".join(f"{k} = ${k}" for k in fields)
         await self.db.query(
