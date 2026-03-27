@@ -3,8 +3,12 @@
 from __future__ import annotations
 
 import logging
+from typing import TYPE_CHECKING
 
 import httpx
+
+if TYPE_CHECKING:
+    from devteam.config.settings import KnowledgeConfig
 
 logger = logging.getLogger(__name__)
 
@@ -111,3 +115,8 @@ class OllamaEmbedder:
     async def close(self) -> None:
         """Close the underlying HTTP client."""
         await self._client.aclose()
+
+
+def create_embedder_from_config(config: "KnowledgeConfig") -> OllamaEmbedder:
+    """Create an OllamaEmbedder from the knowledge configuration."""
+    return OllamaEmbedder(model=config.embedding_model, base_url=config.ollama_url)

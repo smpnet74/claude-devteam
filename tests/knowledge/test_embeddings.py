@@ -4,7 +4,7 @@ import pytest
 import httpx
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from devteam.knowledge.embeddings import OllamaEmbedder, EmbeddingError
+from devteam.knowledge.embeddings import OllamaEmbedder, EmbeddingError, create_embedder_from_config
 
 
 def _mock_response(json_data: dict, status_code: int = 200) -> MagicMock:
@@ -168,3 +168,26 @@ class TestOllamaEmbedder:
         with patch.object(embedder._client, "post", AsyncMock(return_value=mock_resp)):
             with pytest.raises(EmbeddingError, match="Malformed Ollama response"):
                 await embedder.embed("test")
+
+
+class TestCreateEmbedderFromConfig:
+    def test_factory_uses_config_values(self):
+        """create_embedder_from_config threads model and URL from config."""
+        from devteam.config.settings import KnowledgeConfig
+
+        config = KnowledgeConfig(
+            embedding_model="custom-model",
+            ollama_url="http://remote:11434",
+        )
+        embedder = create_embedder_from_config(config)
+        assert embedder.model == "custom-model"
+        assert embedder.base_url == "http://remote:11434"
+
+    def test_factory_uses_defaults(self):
+        """create_embedder_from_config with default config uses defaults."""
+        from devteam.config.settings import KnowledgeConfig
+
+        config = KnowledgeConfig()
+        embedder = create_embedder_from_config(config)
+        assert embedder.model == "nomic-embed-text"
+        assert embedder.base_url == "http://localhost:11434"

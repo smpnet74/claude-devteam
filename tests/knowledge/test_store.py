@@ -396,6 +396,58 @@ class TestUpdateFieldAllowlist:
         with pytest.raises(ValueError, match="Cannot update fields"):
             await store.update_entry(entry_id, not_a_real_field="evil")
 
+    async def test_update_rejects_invalid_sharing_value(self, store: KnowledgeStore):
+        entry_id = await store.create_entry(
+            content="Test content",
+            summary="Test",
+            tags=["process"],
+            sharing="shared",
+            project=None,
+            embedding=[0.1] * 768,
+        )
+        with pytest.raises(ValueError, match="sharing must be"):
+            await store.update_entry(entry_id, sharing="invalid")
+
+    async def test_update_rejects_sharing_project_without_project(self, store: KnowledgeStore):
+        entry_id = await store.create_entry(
+            content="Test content",
+            summary="Test",
+            tags=["process"],
+            sharing="shared",
+            project=None,
+            embedding=[0.1] * 768,
+        )
+        with pytest.raises(ValueError, match="project must be set"):
+            await store.update_entry(entry_id, sharing="project")
+
+    async def test_update_rejects_wrong_embedding_dimensions(self, store: KnowledgeStore):
+        entry_id = await store.create_entry(
+            content="Test content",
+            summary="Test",
+            tags=["process"],
+            sharing="shared",
+            project=None,
+            embedding=[0.1] * 768,
+        )
+        with pytest.raises(
+            ValueError, match=f"Embedding must be {EMBEDDING_DIMENSIONS} dimensions, got 10"
+        ):
+            await store.update_entry(entry_id, embedding=[0.0] * 10)
+
+    async def test_update_rejects_empty_embedding(self, store: KnowledgeStore):
+        entry_id = await store.create_entry(
+            content="Test content",
+            summary="Test",
+            tags=["process"],
+            sharing="shared",
+            project=None,
+            embedding=[0.1] * 768,
+        )
+        with pytest.raises(
+            ValueError, match=f"Embedding must be {EMBEDDING_DIMENSIONS} dimensions, got 0"
+        ):
+            await store.update_entry(entry_id, embedding=[])
+
     async def test_updatable_fields_constant(self):
         assert _UPDATABLE_FIELDS == frozenset(
             {

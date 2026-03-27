@@ -38,7 +38,10 @@ push_to_main = "never"
 
 [knowledge]
 embedding_model = "nomic-embed-text"
+ollama_url = "http://localhost:11434"
 surrealdb_url = "ws://localhost:8000"
+surrealdb_username = "root"
+surrealdb_password = "root"
 cross_project_sharing = "layered"
 
 [rate_limit]

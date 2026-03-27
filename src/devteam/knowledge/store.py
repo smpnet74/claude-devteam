@@ -172,12 +172,44 @@ class KnowledgeStore:
         return self._normalize_row(row)
 
     async def update_entry(self, entry_id: str, **fields: Any) -> None:
-        """Update specific fields on a knowledge entry."""
+        """Update specific fields on a knowledge entry.
+
+        Validates the same invariants as create_entry for the fields being
+        updated (sharing value, project requirement, embedding dimensions).
+        """
         if not fields:
             return
         invalid = set(fields) - _UPDATABLE_FIELDS
         if invalid:
             raise ValueError(f"Cannot update fields: {invalid}")
+
+        # Validate sharing value
+        if "sharing" in fields:
+            if fields["sharing"] not in ("shared", "project"):
+                raise ValueError(
+                    f"sharing must be 'shared' or 'project', got: {fields['sharing']!r}"
+                )
+
+        # Validate project is set when sharing='project'
+        if "sharing" in fields and fields["sharing"] == "project":
+            # project must be provided in this update, or already exist on the entry
+            if "project" not in fields or not fields["project"]:
+                existing = await self.get_entry(entry_id)
+                if not existing or not existing.get("project"):
+                    raise ValueError("project must be set when sharing='project'")
+
+        # Validate embedding dimensions
+        if "embedding" in fields:
+            emb = fields["embedding"]
+            if emb is not None and len(emb) == 0:
+                raise ValueError(
+                    f"Embedding must be {EMBEDDING_DIMENSIONS} dimensions, got 0"
+                )
+            if emb is not None and len(emb) != EMBEDDING_DIMENSIONS:
+                raise ValueError(
+                    f"Embedding must be {EMBEDDING_DIMENSIONS} dimensions, got {len(emb)}"
+                )
+
         rid = self._parse_record_id(entry_id)
         set_clauses = ", ".join(f"{k} = ${k}" for k in fields)
         await self.db.query(
@@ -398,10 +430,13 @@ class KnowledgeStore:
             sup_ids = await self.db.query("SELECT VALUE out FROM supersedes")
             params["sup"] = sup_ids if sup_ids else []
             filters.append("id NOT IN $sup")
-            # Over-fetch from the KNN index to compensate for rows that will
-            # be removed by the NOT IN filter, then trim to the requested
-            # limit after scoring.
-            knn_k = limit + len(params["sup"])
+            # Cap over-fetch to avoid cost scaling with total history.
+            # Ideally we'd scope superseded IDs to the query's neighbourhood,
+            # but that requires a two-pass search.  This bounds the worst case
+            # while still giving good results when the superseded set is small.
+            MAX_SUPERSEDE_OVERFETCH = 50
+            overfetch = min(len(params["sup"]), MAX_SUPERSEDE_OVERFETCH)
+            knn_k = limit + overfetch
 
         # KNN operator: <|K,EF|> where K = number of neighbours, EF = search
         # depth (higher EF = more accurate but slower).  The HNSW index defined

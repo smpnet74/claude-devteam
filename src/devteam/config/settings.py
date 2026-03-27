@@ -66,7 +66,10 @@ class KnowledgeConfig(BaseModel):
     """Knowledge system configuration."""
 
     embedding_model: str = "nomic-embed-text"
+    ollama_url: str = "http://localhost:11434"
     surrealdb_url: str = "ws://localhost:8000"
+    surrealdb_username: str = "root"
+    surrealdb_password: str = "root"
     cross_project_sharing: Literal["layered", "isolated"] = "layered"
 
 
