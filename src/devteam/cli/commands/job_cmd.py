@@ -58,6 +58,7 @@ def register_job_commands(app: typer.Typer) -> None:
             except ValueError as e:
                 typer.echo(f"Error: {e}")
                 raise typer.Exit(code=1)
+            typer.echo(f"(Priority '{priority}' noted — will take effect in daemon mode.)")
 
         if not any([spec, plan, prompt, issue]):
             typer.echo("Provide --spec/--plan, --prompt, or --issue to start a job.")

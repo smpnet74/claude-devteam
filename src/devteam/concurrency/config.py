@@ -35,10 +35,10 @@ def load_concurrency_config(config: dict[str, Any]) -> ConcurrencyConfig:
     max_concurrent = general.get("max_concurrent_agents", 3)
     backoff = rate_limit.get("default_backoff_seconds", 1800)
 
-    if max_concurrent <= 0:
-        raise ValueError("max_concurrent_agents must be positive")
-    if backoff <= 0:
-        raise ValueError("default_backoff_seconds must be positive")
+    if not isinstance(max_concurrent, int) or max_concurrent <= 0:
+        raise ValueError("max_concurrent_agents must be a positive integer")
+    if not isinstance(backoff, int) or backoff <= 0:
+        raise ValueError("default_backoff_seconds must be a positive integer")
 
     return ConcurrencyConfig(
         max_concurrent_agents=max_concurrent,

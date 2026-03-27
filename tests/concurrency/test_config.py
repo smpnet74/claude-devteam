@@ -27,10 +27,10 @@ class TestConcurrencyConfig:
 
     def test_invalid_concurrency_raises(self):
         config = {"general": {"max_concurrent_agents": -1}}
-        with pytest.raises(ValueError, match="must be positive"):
+        with pytest.raises(ValueError, match="must be a positive integer"):
             load_concurrency_config(config)
 
     def test_invalid_backoff_raises(self):
         config = {"rate_limit": {"default_backoff_seconds": 0}}
-        with pytest.raises(ValueError, match="must be positive"):
+        with pytest.raises(ValueError, match="must be a positive integer"):
             load_concurrency_config(config)
