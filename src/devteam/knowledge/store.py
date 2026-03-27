@@ -302,6 +302,35 @@ class KnowledgeStore:
             rows = result
         return rows or []
 
+    async def list_all_entries(
+        self,
+        project: str | None = None,
+        limit: int | None = None,
+    ) -> list[dict[str, Any]]:
+        """Return all knowledge entries, optionally filtered by project.
+
+        Used by the export command to avoid reaching through to the raw
+        database connection.
+
+        Args:
+            project: If provided, return only entries for this project.
+            limit: Maximum number of entries to return.  ``None`` means no limit.
+
+        Returns:
+            List of entry dicts (full rows, including embeddings).
+        """
+        params: dict[str, Any] = {}
+        where_clause = ""
+        if project:
+            where_clause = "WHERE project = $project"
+            params["project"] = project
+
+        limit_clause = f"LIMIT {limit}" if limit is not None else ""
+        query = f"SELECT * FROM knowledge {where_clause} {limit_clause}"
+        result = await self.db.query(query, params)
+        rows = self._extract_rows(result)
+        return [self._normalize_row(r) for r in rows]
+
     async def get_stats(self) -> dict[str, Any]:
         """Get knowledge base statistics (total count)."""
         rows = await self.db.query("SELECT count() AS total FROM knowledge GROUP ALL")

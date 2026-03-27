@@ -47,16 +47,7 @@ def get_store() -> Any:
 
 def _run(coro: Any) -> Any:
     """Run an async coroutine from sync CLI context."""
-    try:
-        loop = asyncio.get_event_loop()
-        if loop.is_running():
-            import concurrent.futures
-
-            with concurrent.futures.ThreadPoolExecutor() as pool:
-                return pool.submit(asyncio.run, coro).result()
-        return loop.run_until_complete(coro)
-    except RuntimeError:
-        return asyncio.run(coro)
+    return asyncio.run(coro)
 
 
 # ---------------------------------------------------------------------------
@@ -213,20 +204,7 @@ def export_knowledge(
         typer.echo(f"Knowledge store unavailable: {e}", err=True)
         raise typer.Exit(1)
 
-    if project:
-        query = "SELECT * FROM knowledge WHERE project = $project"
-        params: dict[str, Any] = {"project": project}
-    else:
-        query = "SELECT * FROM knowledge"
-        params = {}
-
-    result = _run(store.db.query(query, params))
-    rows = (
-        result[0]["result"]
-        if isinstance(result, list) and result and "result" in result[0]
-        else result
-    )
-    entries = rows or []
+    entries = _run(store.list_all_entries(project=project))
 
     # Remove embeddings from export (large, not human-readable)
     for entry in entries:

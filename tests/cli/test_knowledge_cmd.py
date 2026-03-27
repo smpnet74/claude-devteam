@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, patch
 
 from typer.testing import CliRunner
 
-from devteam.cli.commands.knowledge_cmd import knowledge_app, _run
+from devteam.cli.commands.knowledge_cmd import knowledge_app
 
 runner = CliRunner()
 
@@ -36,9 +36,8 @@ def _make_mock_store():
     # get_decay_candidates
     store.get_decay_candidates.return_value = []
 
-    # db.query for export
-    store.db = AsyncMock()
-    store.db.query.return_value = [
+    # list_all_entries for export
+    store.list_all_entries.return_value = [
         {
             "id": "knowledge:abc",
             "content": "Test",
@@ -229,6 +228,8 @@ class TestKnowledgeSearch:
 
 class TestRunHelper:
     def test_run_executes_coroutine(self):
+        from devteam.cli.commands.knowledge_cmd import _run
+
         async def sample():
             return 42
 
