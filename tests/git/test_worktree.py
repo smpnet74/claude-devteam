@@ -1,5 +1,6 @@
 """Tests for worktree management."""
 
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -54,6 +55,30 @@ class TestCreateWorktree:
         """Worktree directory contains repo files."""
         info = create_worktree(git_repo, "feat/files")
         assert (info.path / "README.md").exists()
+
+    def test_create_worktree_stale_branch(self, git_repo: Path) -> None:
+        """Branch exists locally but no worktree -- attach succeeds."""
+        # Create a branch without a worktree (simulates stale branch from partial cleanup)
+        subprocess.run(
+            ["git", "-C", str(git_repo), "branch", "feat/stale"],
+            check=True,
+            capture_output=True,
+        )
+        # Now create_worktree should attach to the existing branch (not use -b)
+        info = create_worktree(git_repo, "feat/stale")
+        assert info.branch == "feat/stale"
+        assert info.path.exists()
+        assert info.commit is not None
+
+    def test_create_worktree_existing_different_dir(self, git_repo: Path) -> None:
+        """Worktree exists at a different path -- returns actual path."""
+        # Create a worktree at a custom location
+        info1 = create_worktree(git_repo, "feat/moved", worktree_dir=".custom")
+        assert info1.path == git_repo / ".custom" / "feat-moved"
+
+        # Re-create with default dir -- should return the actual existing path
+        info2 = create_worktree(git_repo, "feat/moved")
+        assert info2.path == info1.path  # returns actual path, not recomputed
 
 
 class TestRemoveWorktree:

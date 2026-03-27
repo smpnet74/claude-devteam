@@ -181,6 +181,23 @@ class TestGetCurrentBranch:
         branch = get_current_branch(cwd=git_repo)
         assert branch == "feat/test"
 
+    def test_detached_head_raises(self, git_repo: Path) -> None:
+        """get_current_branch raises GitError on detached HEAD."""
+        # Get the current commit SHA and checkout detached
+        sha = subprocess.run(
+            ["git", "-C", str(git_repo), "rev-parse", "HEAD"],
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+        subprocess.run(
+            ["git", "-C", str(git_repo), "checkout", sha],
+            check=True,
+            capture_output=True,
+        )
+        with pytest.raises(GitError, match="Detached HEAD"):
+            get_current_branch(cwd=git_repo)
+
 
 class TestGetDefaultBranch:
     def test_returns_main_or_master(self, git_repo: Path) -> None:

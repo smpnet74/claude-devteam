@@ -10,6 +10,7 @@ import pytest
 
 from devteam.git.fork import (
     ForkInfo,
+    ForkResult,
     ForkStatus,
     _parse_nwo_from_url,
     check_push_access,
@@ -18,7 +19,7 @@ from devteam.git.fork import (
     find_existing_fork,
     setup_fork_remotes,
 )
-from devteam.git.helpers import GhError
+from devteam.git.helpers import GhError, GitError
 
 
 class TestCheckPushAccess:
@@ -130,26 +131,27 @@ class TestEnsureFork:
     def test_has_push_access(self) -> None:
         """Returns DIRECT when push access exists."""
         with patch("devteam.git.fork.check_push_access", return_value=True):
-            status = ensure_fork("org/repo")
-            assert status == ForkStatus.DIRECT
+            result = ensure_fork("org/repo")
+            assert result.status == ForkStatus.DIRECT
+            assert result.fork_nwo is None
 
     def test_existing_fork(self) -> None:
-        """Returns EXISTING_FORK when a fork is found."""
+        """Returns EXISTING_FORK with fork NWO when a fork is found."""
         with patch("devteam.git.fork.check_push_access", return_value=False):
             with patch("devteam.git.fork.find_existing_fork", return_value="myuser/repo"):
-                status = ensure_fork("org/repo")
-                assert status == ForkStatus.EXISTING_FORK
+                result = ensure_fork("org/repo")
+                assert result.status == ForkStatus.EXISTING_FORK
+                assert result.fork_nwo == "myuser/repo"
 
     def test_creates_new_fork(self) -> None:
-        """Creates a fork when none exists and returns NEW_FORK."""
+        """Creates a fork via create_fork and returns NEW_FORK with NWO."""
         with patch("devteam.git.fork.check_push_access", return_value=False):
             with patch("devteam.git.fork.find_existing_fork", return_value=None):
-                with patch("devteam.git.fork.gh_run") as mock_gh:
-                    status = ensure_fork("org/repo")
-                    assert status == ForkStatus.NEW_FORK
-                    mock_gh.assert_called_once_with(
-                        ["repo", "fork", "org/repo", "--clone=false"],
-                    )
+                with patch("devteam.git.fork.create_fork", return_value="myuser/repo") as mock_create:
+                    result = ensure_fork("org/repo")
+                    assert result.status == ForkStatus.NEW_FORK
+                    assert result.fork_nwo == "myuser/repo"
+                    mock_create.assert_called_once_with("org", "repo")
 
     def test_empty_nwo_raises(self) -> None:
         """Empty upstream NWO raises ValueError."""
@@ -195,6 +197,17 @@ class TestSetupForkRemotes:
         with pytest.raises(ValueError, match="fork_nwo must not be empty"):
             setup_fork_remotes(tmp_path, "org/repo", "")
 
+    def test_real_error_propagates(self, tmp_path: Path) -> None:
+        """Non-'No such remote' errors propagate instead of falling back."""
+        def side_effect(args: list[str], cwd: Path | None = None) -> str:
+            if "set-url" in args:
+                raise GitError(args, 128, "fatal: unable to access remote")
+            return ""
+
+        with patch("devteam.git.fork.git_run", side_effect=side_effect):
+            with pytest.raises(GitError, match="unable to access remote"):
+                setup_fork_remotes(tmp_path, "org/repo", "myuser/repo")
+
 
 class TestForkInfo:
     def test_frozen(self) -> None:
@@ -222,6 +235,24 @@ class TestForkInfo:
         assert info.parent_owner == "org"
 
 
+class TestForkResult:
+    def test_frozen(self) -> None:
+        """ForkResult is frozen (immutable)."""
+        result = ForkResult(status=ForkStatus.DIRECT)
+        with pytest.raises(AttributeError):
+            result.status = ForkStatus.NEW_FORK  # type: ignore[misc]
+
+    def test_default_fork_nwo_is_none(self) -> None:
+        """ForkResult defaults fork_nwo to None."""
+        result = ForkResult(status=ForkStatus.DIRECT)
+        assert result.fork_nwo is None
+
+    def test_with_fork_nwo(self) -> None:
+        """ForkResult can carry a fork NWO."""
+        result = ForkResult(status=ForkStatus.NEW_FORK, fork_nwo="myuser/repo")
+        assert result.fork_nwo == "myuser/repo"
+
+
 class TestForkStatus:
     def test_enum_values(self) -> None:
         """ForkStatus has expected values."""
@@ -237,6 +268,16 @@ class TestParseNwoFromUrl:
 
     def test_https_without_git_suffix(self) -> None:
         result = _parse_nwo_from_url("https://github.com/org/repo")
+        assert result == "org/repo"
+
+    def test_ssh_protocol_with_git_suffix(self) -> None:
+        """ssh:// format URLs are parsed correctly."""
+        result = _parse_nwo_from_url("ssh://git@github.com/org/repo.git")
+        assert result == "org/repo"
+
+    def test_ssh_protocol_without_git_suffix(self) -> None:
+        """ssh:// format URLs without .git suffix are parsed correctly."""
+        result = _parse_nwo_from_url("ssh://git@github.com/org/repo")
         assert result == "org/repo"
 
     def test_ssh_with_git_suffix(self) -> None:

@@ -36,6 +36,14 @@ class ForkStatus(Enum):
     NEW_FORK = "new_fork"  # Fork was just created
 
 
+@dataclass(frozen=True)
+class ForkResult:
+    """Result of ensure_fork including optional fork NWO."""
+
+    status: ForkStatus
+    fork_nwo: str | None = None  # owner/repo of the fork
+
+
 def check_push_access(repo_nwo: str) -> bool:
     """Check if the authenticated user has push access to a repo.
 
@@ -134,7 +142,7 @@ def create_fork(owner: str, repo: str) -> str:
     return fork_nwo
 
 
-def ensure_fork(upstream_nwo: str) -> ForkStatus:
+def ensure_fork(upstream_nwo: str) -> ForkResult:
     """Ensure the user can push to the repo, forking if necessary.
 
     Decision tree:
@@ -146,7 +154,7 @@ def ensure_fork(upstream_nwo: str) -> ForkStatus:
         upstream_nwo: Upstream repo in 'owner/name' format.
 
     Returns:
-        ForkStatus indicating the access method.
+        ForkResult with status and optional fork NWO.
 
     Raises:
         ValueError: If upstream_nwo is empty or malformed.
@@ -155,17 +163,18 @@ def ensure_fork(upstream_nwo: str) -> ForkStatus:
         raise ValueError(f"upstream_nwo must be in 'owner/name' format, got: {upstream_nwo!r}")
 
     if check_push_access(upstream_nwo):
-        return ForkStatus.DIRECT
+        return ForkResult(status=ForkStatus.DIRECT)
 
     existing = find_existing_fork(upstream_nwo)
     if existing is not None:
-        return ForkStatus.EXISTING_FORK
+        return ForkResult(status=ForkStatus.EXISTING_FORK, fork_nwo=existing)
 
-    gh_run(["repo", "fork", upstream_nwo, "--clone=false"])
-    return ForkStatus.NEW_FORK
+    owner, repo = upstream_nwo.split("/", 1)
+    fork_nwo = create_fork(owner, repo)
+    return ForkResult(status=ForkStatus.NEW_FORK, fork_nwo=fork_nwo)
 
 
-def detect_fork_strategy(repo_root: Path) -> ForkStatus:
+def detect_fork_strategy(repo_root: Path) -> ForkResult:
     """Determine if forking is needed for the current repository.
 
     Inspects the remote URL to determine the upstream repo, then
@@ -175,7 +184,7 @@ def detect_fork_strategy(repo_root: Path) -> ForkStatus:
         repo_root: Root of the local git clone.
 
     Returns:
-        ForkStatus indicating the recommended strategy.
+        ForkResult with status and optional fork NWO.
 
     Raises:
         ValueError: If the remote URL cannot be parsed.
@@ -217,14 +226,20 @@ def setup_fork_remotes(
     # Set origin to the fork
     try:
         git_run(["remote", "set-url", "origin", fork_url], cwd=repo_root)
-    except GitError:
-        git_run(["remote", "add", "origin", fork_url], cwd=repo_root)
+    except GitError as e:
+        if "No such remote" in e.stderr:
+            git_run(["remote", "add", "origin", fork_url], cwd=repo_root)
+        else:
+            raise
 
     # Set upstream to the original repo
     try:
         git_run(["remote", "set-url", "upstream", upstream_url], cwd=repo_root)
-    except GitError:
-        git_run(["remote", "add", "upstream", upstream_url], cwd=repo_root)
+    except GitError as e:
+        if "No such remote" in e.stderr:
+            git_run(["remote", "add", "upstream", upstream_url], cwd=repo_root)
+        else:
+            raise
 
 
 def _parse_nwo_from_url(url: str) -> str:
@@ -233,6 +248,7 @@ def _parse_nwo_from_url(url: str) -> str:
     Handles:
         https://github.com/owner/repo.git
         https://github.com/owner/repo
+        ssh://git@github.com/owner/repo.git
         git@github.com:owner/repo.git
         git@github.com:owner/repo
 
@@ -246,6 +262,11 @@ def _parse_nwo_from_url(url: str) -> str:
         ValueError: If the URL cannot be parsed.
     """
     url = url.strip()
+
+    # SSH: ssh://git@github.com/owner/repo.git
+    if url.startswith("ssh://git@github.com/"):
+        path = url.split("github.com/", 1)[1]
+        return path.removesuffix(".git")
 
     # SSH format: git@github.com:owner/repo.git
     if url.startswith("git@github.com:"):

@@ -136,7 +136,14 @@ def get_current_branch(cwd: Path | str | None = None) -> str:
     Raises:
         GitError: If not in a git repository or HEAD is detached.
     """
-    return git_run(["rev-parse", "--abbrev-ref", "HEAD"], cwd=cwd)
+    branch = git_run(["rev-parse", "--abbrev-ref", "HEAD"], cwd=cwd).strip()
+    if branch == "HEAD":
+        raise GitError(
+            ["rev-parse", "--abbrev-ref", "HEAD"],
+            0,
+            "Detached HEAD state — no current branch",
+        )
+    return branch
 
 
 def get_default_branch(cwd: Path | str | None = None) -> str:

@@ -10,6 +10,7 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
+from devteam.git.branch import branch_exists
 from devteam.git.helpers import git_run
 
 
@@ -42,7 +43,7 @@ def create_worktree(
     repo_root: Path,
     branch: str,
     worktree_dir: str = ".worktrees",
-    base_ref: str = "HEAD",
+    base_ref: str | None = None,
 ) -> WorktreeInfo:
     """Create a worktree with a new branch.
 
@@ -65,21 +66,28 @@ def create_worktree(
     if not branch:
         raise ValueError("branch must not be empty")
 
+    # Check if worktree already exists for this branch (return actual path)
+    existing = list_worktrees(repo_root)
+    for wt in existing:
+        if wt.branch == branch:
+            return wt
+
     dirname = _branch_to_dirname(branch)
     wt_path = repo_root / worktree_dir / dirname
-
-    # Idempotency: check if this worktree already exists
-    if worktree_exists(repo_root, branch):
-        commit = git_run(["rev-parse", "HEAD"], cwd=wt_path)
-        return WorktreeInfo(path=wt_path, branch=branch, commit=commit)
 
     # Ensure the worktree base directory exists
     (repo_root / worktree_dir).mkdir(parents=True, exist_ok=True)
 
-    git_run(
-        ["worktree", "add", str(wt_path), "-b", branch, base_ref],
-        cwd=repo_root,
-    )
+    if branch_exists(repo_root, branch):
+        # Branch exists locally but no worktree (stale from partial cleanup)
+        git_run(["worktree", "add", str(wt_path), branch], cwd=repo_root)
+    else:
+        # Create new branch and worktree
+        cmd = ["worktree", "add", "-b", branch, str(wt_path)]
+        if base_ref:
+            cmd.append(base_ref)
+        git_run(cmd, cwd=repo_root)
+
     commit = git_run(["rev-parse", "HEAD"], cwd=wt_path)
     return WorktreeInfo(path=wt_path, branch=branch, commit=commit)
 
