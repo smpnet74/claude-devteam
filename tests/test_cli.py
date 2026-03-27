@@ -148,9 +148,7 @@ class TestJobCommands:
         assert "W-1" in result.output
 
     def test_start_with_issue(self) -> None:
-        result = runner.invoke(
-            app, ["start", "--issue", "https://github.com/org/repo/issues/42"]
-        )
+        result = runner.invoke(app, ["start", "--issue", "https://github.com/org/repo/issues/42"])
         assert result.exit_code == 0
         assert "W-1" in result.output
 

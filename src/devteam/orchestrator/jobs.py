@@ -9,6 +9,7 @@ and post-PR review into a single durable workflow.
 
 from __future__ import annotations
 
+import traceback
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Literal
@@ -198,9 +199,10 @@ def execute_job(
 
         # Step 3: Small fix path -- skip decomposition, create single task
         if job.routing.path == RoutePath.SMALL_FIX:
-            target_team: Literal["a", "b"] = (
-                "a" if job.routing.target_team != "b" else "b"
+            assert job.routing.target_team in ("a", "b"), (
+                "RoutingResult validator guarantees target_team for SMALL_FIX"
             )
+            target_team: Literal["a", "b"] = job.routing.target_team
             single_task = TaskDecomposition(
                 id="T-1",
                 description=job.intake.prompt or job.intake.spec or "Small fix",
@@ -233,9 +235,7 @@ def execute_job(
             return job
 
         if not task_launcher or not task_checker:
-            raise ValueError(
-                "task_launcher and task_checker are required for non-research routes"
-            )
+            raise ValueError("task_launcher and task_checker are required for non-research routes")
 
         # Step 4: Execute DAG
         if job.status != JobStatus.EXECUTING:
@@ -282,9 +282,7 @@ def execute_job(
                     invoker=invoker,
                 )
                 if not review_result.all_passed:
-                    job.error = (
-                        f"Post-PR review failed: {', '.join(review_result.failed_gates)}"
-                    )
+                    job.error = f"Post-PR review failed: {', '.join(review_result.failed_gates)}"
                     transition_job(job, JobStatus.FAILED)
                     return job
 
@@ -295,7 +293,7 @@ def execute_job(
             transition_job(job, JobStatus.FAILED)
             job.error = job.error or "Some tasks failed"
 
-    except Exception as e:
+    except Exception:
         # Any unhandled error transitions the job to FAILED
         if job.status not in (JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.CANCELED):
             try:
@@ -303,6 +301,6 @@ def execute_job(
             except ValueError:
                 # Already in a terminal state
                 pass
-            job.error = str(e)
+            job.error = traceback.format_exc()
 
     return job

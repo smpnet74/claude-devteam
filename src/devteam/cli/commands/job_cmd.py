@@ -38,13 +38,13 @@ def _get_store() -> JobStore:
 def register_job_commands(app: typer.Typer) -> None:
     """Register job control commands directly on the main app."""
 
+    # NOTE: --priority is planned for Phase 6 (rate limit & concurrency).
     @app.command()
     def start(
         spec: str | None = typer.Option(None, "--spec", help="Path to spec document"),
         plan: str | None = typer.Option(None, "--plan", help="Path to plan document"),
         prompt: str | None = typer.Option(None, "--prompt", help="Direct prompt for small fixes"),
         issue: str | None = typer.Option(None, "--issue", help="GitHub issue URL"),
-        priority: str = typer.Option("normal", "--priority", help="Job priority: high/normal/low"),
     ) -> None:
         """Start a new development job."""
         if not any([spec, plan, prompt, issue]):
@@ -99,7 +99,9 @@ def register_job_commands(app: typer.Typer) -> None:
                 return
             for j in jobs:  # type: ignore[union-attr]
                 prog = j.get("progress", (0, 0))
-                typer.echo(f"  {j['job_id']}  {j['status']:<12}  {j['title']}  [{prog[0]}/{prog[1]}]")
+                typer.echo(
+                    f"  {j['job_id']}  {j['status']:<12}  {j['title']}  [{prog[0]}/{prog[1]}]"
+                )
         else:
             prog = result.get("progress", (0, 0))
             typer.echo(
@@ -183,6 +185,5 @@ def register_job_commands(app: typer.Typer) -> None:
             typer.echo(f"Question {question_ref} not found.")
             raise typer.Exit(code=1)
         typer.echo(
-            f"Answer recorded for {question_ref}. "
-            "Task will resume when the daemon processes it."
+            f"Answer recorded for {question_ref}. Task will resume when the daemon processes it."
         )

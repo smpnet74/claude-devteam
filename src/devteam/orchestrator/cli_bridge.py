@@ -228,10 +228,12 @@ def handle_answer(
     Returns:
         The EscalationResult, or None if the question was not found.
     """
-    question_id = _parse_question_ref(question_ref)
+    job_id, question_id = _parse_question_ref(question_ref)
     tracker = store.get_question(question_id)
     if not tracker:
         return None
+    if job_id and tracker.job_id != job_id:
+        raise ValueError(f"Question {question_id} belongs to job {tracker.job_id}, not {job_id}")
 
     result = resolve_with_human_answer(tracker.record, answer)
     tracker.resolved = True
@@ -297,23 +299,25 @@ def handle_status(
 # ---------------------------------------------------------------------------
 
 
+TERMINAL_STATES = {JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.CANCELED}
+
+
 def handle_cancel(
     store: JobStore,
     job_id: str,
 ) -> bool:
     """Handle ``devteam cancel`` -- set cancellation flag on a job.
 
-    Returns True if the job was found and the flag was set.
+    Returns True if the job was found and cancelled.
+    Returns False if the job was not found or is already in a terminal state.
     """
     job = store.get(job_id)
     if not job:
         return False
+    if job.status in TERMINAL_STATES:
+        return False  # Already terminal, nothing to cancel
     job.cancelled = True
-    if job.status not in (JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.CANCELED):
-        try:
-            transition_job(job, JobStatus.CANCELED)
-        except ValueError:
-            pass  # Already terminal
+    transition_job(job, JobStatus.CANCELED)
     store.save(job)
     return True
 
@@ -341,8 +345,9 @@ def _parse_task_ref(ref: str, store: JobStore) -> tuple[str | None, str]:
     return None, ref
 
 
-def _parse_question_ref(ref: str) -> str:
-    """Parse 'W-1/Q-3' or 'Q-3' into question_id."""
+def _parse_question_ref(ref: str) -> tuple[str | None, str]:
+    """Parse 'W-1/Q-3' or 'Q-3' into (job_id, question_id)."""
     if "/" in ref:
-        return ref.split("/", 1)[1]
-    return ref
+        parts = ref.split("/", 1)
+        return parts[0], parts[1]
+    return None, ref
