@@ -13,6 +13,8 @@ from typing import Any, cast
 
 from devteam.git.helpers import GhError, gh_run
 
+_ALLOWED_MERGE_STRATEGIES = frozenset({"squash", "merge", "rebase"})
+
 
 @dataclass
 class PRInfo:
@@ -230,10 +232,12 @@ def check_pr_status(cwd: Path, pr_number: int) -> PRFeedback:
     coderabbit = categorize_coderabbit_comments(all_comments)
 
     review_decision = review_data.get("reviewDecision", "")
+    # Deny-list approach: treat unknown/new review states as non-blocking
+    # rather than requiring an explicit allow-list that could miss new states.
     all_green = (
         check_status in (PRCheckStatus.ALL_PASSED, PRCheckStatus.NO_CHECKS)
         and not coderabbit.errors
-        and review_decision in ("APPROVED", "")
+        and review_decision not in ("CHANGES_REQUESTED", "REVIEW_REQUIRED")
     )
 
     return PRFeedback(
@@ -261,6 +265,11 @@ def merge_pr(
         pr_number: PR number to merge.
         strategy: Merge strategy -- 'squash', 'merge', or 'rebase'.
     """
+    if strategy not in _ALLOWED_MERGE_STRATEGIES:
+        raise ValueError(
+            f"Invalid merge strategy {strategy!r}; "
+            f"must be one of {sorted(_ALLOWED_MERGE_STRATEGIES)}"
+        )
     strategy_flag = f"--{strategy}"
     try:
         gh_run(
@@ -301,12 +310,14 @@ def close_pr(
                 cwd=cwd,
             )
         except GhError:
-            pass  # Comment failure is non-fatal
+            # Non-fatal: comment posting can fail due to rate limits, auth issues, etc.
+            # TODO: Add logging when logger is available.
+            pass
 
     try:
         gh_run(["pr", "close", str(pr_number)], cwd=cwd)
     except GhError as e:
-        if "already closed" in e.stderr:
+        if "already closed" in e.stderr.lower() or "already merged" in e.stderr.lower():
             return
         raise
 
