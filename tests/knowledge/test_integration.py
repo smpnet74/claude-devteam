@@ -120,7 +120,7 @@ class TestFullKnowledgeLifecycle:
 
         result = await extractor.persist_entries(
             entries=entries,
-            agent_role="backend_engineer",
+            agent_role="backend",
             project="myapp",
             task_id="T-2",
         )
@@ -230,7 +230,6 @@ class TestFullKnowledgeLifecycle:
         # No store connected
         index = await build_memory_index_safe(
             store=None,
-            role="backend_engineer",
             project="myapp",
         )
         assert isinstance(index, str)
@@ -250,7 +249,7 @@ class TestFullKnowledgeLifecycle:
                     scope="process",
                 ),
             ],
-            agent_role="backend_engineer",
+            agent_role="backend",
             project="myapp",
             task_id="T-99",
         )
@@ -274,14 +273,13 @@ class TestMemoryIndexInjection:
                     scope="process",
                 ),
             ],
-            agent_role="backend_engineer",
+            agent_role="backend",
             project="myapp",
             task_id="T-1",
         )
 
         index = await build_memory_index_safe(
             store=store,
-            role="backend_engineer",
             project="myapp",
         )
 
@@ -299,7 +297,6 @@ class TestMemoryIndexInjection:
         """Even an empty index is a valid string for prompt injection."""
         index = await build_memory_index_safe(
             store=None,
-            role="backend_engineer",
             project="myapp",
         )
         base_prompt = "You are a backend engineer."
@@ -318,7 +315,7 @@ class TestQueryToolDefinition:
             store=store,
             embedder=mock_embedder,
             current_project="myapp",
-            agent_role="backend_engineer",
+            agent_role="backend",
         )
         defn = tool.tool_definition()
 
@@ -355,7 +352,7 @@ class TestQueryToolDefinition:
             store=store,
             embedder=mock_embedder,
             current_project="myapp",
-            agent_role="backend_engineer",
+            agent_role="backend",
         )
         # tool_definition() is synchronous and should not require any async calls
         defn = tool.tool_definition()

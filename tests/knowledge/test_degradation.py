@@ -16,7 +16,6 @@ class TestDegradedSurrealDB:
         """When SurrealDB is unavailable (store=None), index returns empty/minimal."""
         result = await build_memory_index_safe(
             store=None,
-            role="backend_engineer",
             project="myapp",
         )
         assert isinstance(result, str)
@@ -29,7 +28,6 @@ class TestDegradedSurrealDB:
 
         result = await build_memory_index_safe(
             store=store,
-            role="backend_engineer",
             project="myapp",
         )
         assert isinstance(result, str)
@@ -55,7 +53,6 @@ class TestDegradedSurrealDB:
 
         result = await build_memory_index_safe(
             store=store,
-            role="backend_engineer",
             project="myapp",
         )
         assert isinstance(result, str)
@@ -79,7 +76,7 @@ class TestDegradedSurrealDB:
         ]
         result = await extractor.persist_entries(
             entries=entries,
-            agent_role="backend_engineer",
+            agent_role="backend",
             project="myapp",
             task_id="T-1",
         )
@@ -99,7 +96,7 @@ class TestDegradedOllama:
             store=store,
             embedder=embedder,
             current_project="myapp",
-            agent_role="backend_engineer",
+            agent_role="backend",
         )
         result = await tool.query("anything")
         assert "unavailable" in result.lower()
@@ -120,7 +117,7 @@ class TestDegradedOllama:
         ]
         result = await extractor.persist_entries(
             entries=entries,
-            agent_role="backend_engineer",
+            agent_role="backend",
             project="myapp",
             task_id="T-1",
         )
@@ -145,7 +142,7 @@ class TestDegradedBothUnavailable:
             store=store,
             embedder=embedder,
             current_project="myapp",
-            agent_role="backend_engineer",
+            agent_role="backend",
         )
         result = await tool.query("anything")
         assert isinstance(result, str)
@@ -162,7 +159,7 @@ class TestDegradedBothUnavailable:
                     scope="process",
                 ),
             ],
-            agent_role="backend_engineer",
+            agent_role="backend",
             project="myapp",
             task_id="T-1",
         )
