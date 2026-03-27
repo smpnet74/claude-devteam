@@ -202,9 +202,7 @@ class KnowledgeStore:
         if "embedding" in fields:
             emb = fields["embedding"]
             if emb is not None and len(emb) == 0:
-                raise ValueError(
-                    f"Embedding must be {EMBEDDING_DIMENSIONS} dimensions, got 0"
-                )
+                raise ValueError(f"Embedding must be {EMBEDDING_DIMENSIONS} dimensions, got 0")
             if emb is not None and len(emb) != EMBEDDING_DIMENSIONS:
                 raise ValueError(
                     f"Embedding must be {EMBEDDING_DIMENSIONS} dimensions, got {len(emb)}"

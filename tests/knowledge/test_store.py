@@ -30,9 +30,11 @@ class TestKnowledgeStoreConnection:
         """Schema tables and indexes should exist after connect."""
         result = await store.db.query("INFO FOR TABLE knowledge")
         assert result is not None
-        assert isinstance(result, dict)
-        assert "fields" in result
-        assert "content" in result["fields"]
+        # db.query() returns a list; extract the first element
+        info = result[0] if isinstance(result, list) else result
+        assert isinstance(info, dict)
+        assert "fields" in info
+        assert "content" in info["fields"]
 
     async def test_multiple_connect_is_idempotent(self):
         """Calling connect twice should not raise."""
