@@ -105,22 +105,9 @@ def check_pr_exists(
     Returns:
         RecoveryCheck with exists flag and details.
     """
-    pr = find_existing_pr(cwd, branch)
+    pr = find_existing_pr(cwd, branch, repo=upstream_repo)
     if pr is not None:
         return RecoveryCheck(exists=True, clean=True, details=f"PR #{pr.number} found")
-
-    # In fork workflows, check upstream repo
-    if upstream_repo:
-        try:
-            result = gh_run(
-                ["pr", "list", "--head", branch, "--repo", upstream_repo, "--json", "number,url"],
-                cwd=cwd,
-                parse_json=True,
-            )
-            if result:
-                return RecoveryCheck(exists=True, clean=True, details="Upstream PR found")
-        except GhError:
-            pass
 
     return RecoveryCheck(exists=False, clean=False, details="No PR found")
 

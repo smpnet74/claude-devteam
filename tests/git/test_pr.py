@@ -179,6 +179,22 @@ class TestCheckPRStatus:
             assert feedback.check_status == PRCheckStatus.SOME_FAILED
             assert "ci" in feedback.failed_checks
 
+    def test_ci_skipping(self, tmp_path: Path):
+        """Skipped checks are non-blocking (e.g., path-filtered CI)."""
+        with patch("devteam.git.pr.gh_run") as mock_gh:
+            mock_gh.side_effect = [
+                [
+                    {"name": "ci", "state": "completed", "bucket": "pass"},
+                    {"name": "deploy", "state": "completed", "bucket": "skipping"},
+                ],
+                {"reviews": [], "comments": [], "reviewDecision": "APPROVED"},
+            ]
+            feedback = check_pr_status(tmp_path, 42)
+            assert feedback.ci_complete is True
+            assert feedback.check_status == PRCheckStatus.ALL_PASSED
+            assert feedback.all_green is True
+            assert not feedback.failed_checks
+
     def test_no_checks(self, tmp_path: Path):
         """Repo with no CI checks configured."""
         with patch("devteam.git.pr.gh_run") as mock_gh:

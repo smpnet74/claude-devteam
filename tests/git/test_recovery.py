@@ -105,20 +105,21 @@ class TestCheckPRExists:
 
     def test_pr_found_in_upstream(self, tmp_path: Path):
         """Returns exists=True when PR found in upstream repo (fork workflow)."""
-        with patch("devteam.git.recovery.find_existing_pr", return_value=None):
-            with patch("devteam.git.recovery.gh_run") as mock_gh:
-                mock_gh.return_value = [{"number": 77, "url": "..."}]
-                result = check_pr_exists(tmp_path, "feat/fork-fix", upstream_repo="org/upstream")
-                assert result.exists is True
-                assert "Upstream PR found" in result.details
+        with patch("devteam.git.recovery.find_existing_pr") as mock_find:
+            from devteam.git.pr import PRInfo
+
+            mock_find.return_value = PRInfo(number=77, url="...", branch="feat/fork-fix")
+            result = check_pr_exists(tmp_path, "feat/fork-fix", upstream_repo="org/upstream")
+            assert result.exists is True
+            assert "PR #77" in result.details
+            # Verify upstream_repo is passed through to find_existing_pr
+            mock_find.assert_called_once_with(tmp_path, "feat/fork-fix", repo="org/upstream")
 
     def test_pr_not_found_in_upstream(self, tmp_path: Path):
-        """Returns exists=False when no PR in local or upstream."""
+        """Returns exists=False when no PR found even with upstream_repo."""
         with patch("devteam.git.recovery.find_existing_pr", return_value=None):
-            with patch("devteam.git.recovery.gh_run") as mock_gh:
-                mock_gh.return_value = []
-                result = check_pr_exists(tmp_path, "feat/fork-fix", upstream_repo="org/upstream")
-                assert result.exists is False
+            result = check_pr_exists(tmp_path, "feat/fork-fix", upstream_repo="org/upstream")
+            assert result.exists is False
 
 
 class TestCheckPRMerged:

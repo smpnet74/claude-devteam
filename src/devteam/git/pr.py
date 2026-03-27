@@ -161,11 +161,15 @@ def create_pr(
 
     # gh pr create prints the PR URL on stdout (not JSON)
     url = gh_run(args, cwd=cwd)
-    assert isinstance(url, str)
-    url = url.strip()
+    if not isinstance(url, str):
+        raise TypeError(f"Expected URL string from gh pr create, got {type(url).__name__}")
+    url_str = url.strip()
 
     # Extract PR number from URL (e.g., https://github.com/owner/repo/pull/42)
-    pr_number = int(url.rstrip("/").split("/")[-1])
+    try:
+        pr_number = int(url_str.rstrip("/").split("/")[-1])
+    except (ValueError, IndexError) as e:
+        raise GhError(args, 0, f"Could not parse PR number from URL: {url_str}") from e
 
     # Fetch full PR info for consistency
     fetched = find_existing_pr(cwd, branch, repo=upstream_repo)
@@ -174,7 +178,7 @@ def create_pr(
 
     return PRInfo(
         number=pr_number,
-        url=url,
+        url=url_str,
         branch=branch,
         title=title,
         state="OPEN",
@@ -251,6 +255,10 @@ def check_pr_status(cwd: Path, pr_number: int) -> PRFeedback:
                 failed_checks.append(check["name"])
             elif bucket == "pending":
                 has_pending = True
+            elif bucket == "skipping":
+                # Skipped checks are non-blocking (e.g., path-filtered CI)
+                pass
+            # bucket == "pass" is the implicit success case
 
         ci_complete = not has_pending
 
