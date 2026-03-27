@@ -29,15 +29,15 @@ knowledge_app = typer.Typer(
 
 
 # ---------------------------------------------------------------------------
-# Module-level store singleton (lazy-connected, like job_cmd)
+# Module-level store singleton (lazy-connected via async helper)
 # ---------------------------------------------------------------------------
 
 _store: Any = None  # KnowledgeStore | None
 _embedder: Any = None  # OllamaEmbedder | None
 
 
-def get_store() -> tuple[Any, Any]:
-    """Get the KnowledgeStore and embedder instances, configured from global config."""
+async def _ensure_connected() -> tuple[Any, Any]:
+    """Get the KnowledgeStore and embedder, connecting on first call."""
     from devteam.config.settings import load_global_config
     from devteam.knowledge.embeddings import create_embedder_from_config
     from devteam.knowledge.store import KnowledgeStore
@@ -47,21 +47,91 @@ def get_store() -> tuple[Any, Any]:
         config_path = Path.home() / ".devteam" / "config.toml"
         config = load_global_config(config_path)
         _store = KnowledgeStore(config.knowledge.surrealdb_url)
-        _run(_store.connect(
+        await _store.connect(
             username=config.knowledge.surrealdb_username,
             password=config.knowledge.surrealdb_password,
-        ))
+        )
         _embedder = create_embedder_from_config(config.knowledge)
     return _store, _embedder
 
 
-def _run(coro: Any) -> Any:
-    """Run an async coroutine from sync CLI context."""
-    return asyncio.run(coro)
+# ---------------------------------------------------------------------------
+# Async implementations — one per command, single event-loop lifetime
+# ---------------------------------------------------------------------------
+
+
+async def _search_impl(
+    query: str, scope: str, project: str | None, limit: int
+) -> str:
+    from devteam.knowledge.query_tool import QueryKnowledgeTool
+
+    store, embedder = await _ensure_connected()
+    tool = QueryKnowledgeTool(
+        store=store,
+        embedder=embedder,
+        current_project=project or "",
+        agent_role="admin",
+    )
+    return await tool.query(query, scope=scope, limit=limit)
+
+
+async def _stats_impl() -> dict[str, Any]:
+    store, _emb = await _ensure_connected()
+    return await store.get_stats_detailed()
+
+
+async def _verify_impl(entry_id: str) -> None:
+    store, _emb = await _ensure_connected()
+    await store.update_entry(entry_id, verified=True)
+
+
+async def _redact_impl(entry_id: str) -> dict[str, Any] | None:
+    from devteam.knowledge.embeddings import EMBEDDING_DIMENSIONS
+
+    store, _emb = await _ensure_connected()
+    entry = await store.get_entry(entry_id)
+    if not entry:
+        return None
+    await store.update_entry(
+        entry_id,
+        content="[REDACTED]",
+        embedding=[0.0] * EMBEDDING_DIMENSIONS,
+    )
+    return entry
+
+
+async def _purge_impl(
+    entry_id: str | None, project: str | None, older_than: int | None
+) -> str:
+    store, _emb = await _ensure_connected()
+
+    if older_than is not None:
+        candidates = await store.get_decay_candidates(
+            min_age_hours=older_than * 24,
+            max_access_count=0,
+        )
+        if not candidates:
+            return "No entries match purge criteria."
+        for c in candidates:
+            await store.delete_entry(str(c["id"]))
+        return f"Purged {len(candidates)} stale entries older than {older_than} days."
+    elif project:
+        count = await store.delete_by_project(project)
+        return f"Purged {count} entries for project '{project}'."
+    elif entry_id:
+        await store.delete_entry(entry_id)
+        return f"Purged entry {entry_id}."
+    else:
+        return ""
+
+
+async def _export_impl(project: str | None) -> list[dict[str, Any]]:
+    store, _emb = await _ensure_connected()
+    return await store.list_all_entries(project=project)
 
 
 # ---------------------------------------------------------------------------
-# Commands
+# Commands — each calls asyncio.run() exactly once
 # ---------------------------------------------------------------------------
 
 
@@ -73,22 +143,8 @@ def search(
     limit: int = typer.Option(5, help="Max results"),
 ) -> None:
     """Semantic search of the knowledge base."""
-    from devteam.knowledge.query_tool import QueryKnowledgeTool
-
     try:
-        store, embedder = get_store()
-    except Exception as e:
-        typer.echo(f"Knowledge store unavailable: {e}", err=True)
-        raise typer.Exit(1)
-
-    try:
-        tool = QueryKnowledgeTool(
-            store=store,
-            embedder=embedder,
-            current_project=project or "",
-            agent_role="admin",
-        )
-        result = _run(tool.query(query, scope=scope, limit=limit))
+        result = asyncio.run(_search_impl(query, scope, project, limit))
     except Exception as e:
         typer.echo(f"Error: {e}", err=True)
         raise typer.Exit(code=1)
@@ -99,13 +155,7 @@ def search(
 def stats() -> None:
     """Show knowledge base statistics."""
     try:
-        store, _emb = get_store()
-    except Exception as e:
-        typer.echo(f"Knowledge store unavailable: {e}", err=True)
-        raise typer.Exit(1)
-
-    try:
-        s = _run(store.get_stats_detailed())
+        s = asyncio.run(_stats_impl())
     except Exception as e:
         typer.echo(f"Error: {e}", err=True)
         raise typer.Exit(code=1)
@@ -132,13 +182,7 @@ def verify(
 ) -> None:
     """Manually mark a knowledge entry as verified."""
     try:
-        store, _emb = get_store()
-    except Exception as e:
-        typer.echo(f"Knowledge store unavailable: {e}", err=True)
-        raise typer.Exit(1)
-
-    try:
-        _run(store.update_entry(entry_id, verified=True))
+        asyncio.run(_verify_impl(entry_id))
     except Exception as e:
         typer.echo(f"Error: {e}", err=True)
         raise typer.Exit(code=1)
@@ -151,31 +195,14 @@ def redact(
 ) -> None:
     """Remove sensitive content from an entry, preserving the learning."""
     try:
-        store, _emb = get_store()
-    except Exception as e:
-        typer.echo(f"Knowledge store unavailable: {e}", err=True)
-        raise typer.Exit(1)
-
-    try:
-        entry = _run(store.get_entry(entry_id))
-        if not entry:
-            typer.echo(f"Entry {entry_id} not found.", err=True)
-            raise typer.Exit(1)
-
-        from devteam.knowledge.embeddings import EMBEDDING_DIMENSIONS
-
-        _run(
-            store.update_entry(
-                entry_id,
-                content="[REDACTED]",
-                embedding=[0.0] * EMBEDDING_DIMENSIONS,
-            )
-        )
-    except typer.Exit:
-        raise
+        entry = asyncio.run(_redact_impl(entry_id))
     except Exception as e:
         typer.echo(f"Error: {e}", err=True)
         raise typer.Exit(code=1)
+
+    if entry is None:
+        typer.echo(f"Entry {entry_id} not found.", err=True)
+        raise typer.Exit(1)
     typer.echo(f"Redacted content from {entry_id}. Summary preserved: {entry.get('summary', '')}")
 
 
@@ -188,40 +215,16 @@ def purge(
     ),
 ) -> None:
     """Delete knowledge entries entirely."""
-    try:
-        store, _emb = get_store()
-    except Exception as e:
-        typer.echo(f"Knowledge store unavailable: {e}", err=True)
+    if not any([entry_id, project, older_than is not None]):
+        typer.echo("Provide either an entry ID, --project, or --older-than.", err=True)
         raise typer.Exit(1)
 
     try:
-        if older_than is not None:
-            candidates = _run(
-                store.get_decay_candidates(
-                    min_age_hours=older_than * 24,
-                    max_access_count=0,
-                )
-            )
-            if not candidates:
-                typer.echo("No entries match purge criteria.")
-                return
-            for c in candidates:
-                _run(store.delete_entry(str(c["id"])))
-            typer.echo(f"Purged {len(candidates)} stale entries older than {older_than} days.")
-        elif project:
-            count = _run(store.delete_by_project(project))
-            typer.echo(f"Purged {count} entries for project '{project}'.")
-        elif entry_id:
-            _run(store.delete_entry(entry_id))
-            typer.echo(f"Purged entry {entry_id}.")
-        else:
-            typer.echo("Provide either an entry ID, --project, or --older-than.", err=True)
-            raise typer.Exit(1)
-    except typer.Exit:
-        raise
+        msg = asyncio.run(_purge_impl(entry_id, project, older_than))
     except Exception as e:
         typer.echo(f"Error: {e}", err=True)
         raise typer.Exit(code=1)
+    typer.echo(msg)
 
 
 @knowledge_app.command(name="export")
@@ -231,13 +234,7 @@ def export_knowledge(
 ) -> None:
     """Export knowledge base to JSON."""
     try:
-        store, _emb = get_store()
-    except Exception as e:
-        typer.echo(f"Knowledge store unavailable: {e}", err=True)
-        raise typer.Exit(1)
-
-    try:
-        entries = _run(store.list_all_entries(project=project))
+        entries = asyncio.run(_export_impl(project))
     except Exception as e:
         typer.echo(f"Error: {e}", err=True)
         raise typer.Exit(code=1)

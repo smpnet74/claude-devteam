@@ -171,6 +171,13 @@ class QueryKnowledgeTool:
                             "'all' for everything accessible"
                         ),
                     },
+                    "limit": {
+                        "type": "integer",
+                        "description": "Maximum number of results to return",
+                        "default": 5,
+                        "minimum": 1,
+                        "maximum": 50,
+                    },
                 },
                 "required": ["query"],
             },
