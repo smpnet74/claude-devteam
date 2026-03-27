@@ -125,7 +125,9 @@ class TestKnowledgeStoreCRUD:
             )
 
     async def test_create_entry_validates_embedding_too_short(self, store: KnowledgeStore):
-        with pytest.raises(ValueError, match=f"Embedding must be {EMBEDDING_DIMENSIONS} dimensions, got 10"):
+        with pytest.raises(
+            ValueError, match=f"Embedding must be {EMBEDDING_DIMENSIONS} dimensions, got 10"
+        ):
             await store.create_entry(
                 content="test",
                 summary="test",
@@ -136,7 +138,9 @@ class TestKnowledgeStoreCRUD:
             )
 
     async def test_create_entry_validates_embedding_too_long(self, store: KnowledgeStore):
-        with pytest.raises(ValueError, match=f"Embedding must be {EMBEDDING_DIMENSIONS} dimensions, got 1024"):
+        with pytest.raises(
+            ValueError, match=f"Embedding must be {EMBEDDING_DIMENSIONS} dimensions, got 1024"
+        ):
             await store.create_entry(
                 content="test",
                 summary="test",

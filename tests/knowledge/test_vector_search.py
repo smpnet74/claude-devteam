@@ -123,15 +123,25 @@ class TestVectorSearch:
         assert results == []
         await s.close()
 
-    async def test_search_validates_embedding_dimensions_too_short(self, populated_store: KnowledgeStore):
-        with pytest.raises(ValueError, match=f"Search vector must be {EMBEDDING_DIMENSIONS} dimensions, got 10"):
+    async def test_search_validates_embedding_dimensions_too_short(
+        self, populated_store: KnowledgeStore
+    ):
+        with pytest.raises(
+            ValueError, match=f"Search vector must be {EMBEDDING_DIMENSIONS} dimensions, got 10"
+        ):
             await populated_store.vector_search([0.1] * 10, limit=5)
 
-    async def test_search_validates_embedding_dimensions_too_long(self, populated_store: KnowledgeStore):
-        with pytest.raises(ValueError, match=f"Search vector must be {EMBEDDING_DIMENSIONS} dimensions, got 1024"):
+    async def test_search_validates_embedding_dimensions_too_long(
+        self, populated_store: KnowledgeStore
+    ):
+        with pytest.raises(
+            ValueError, match=f"Search vector must be {EMBEDDING_DIMENSIONS} dimensions, got 1024"
+        ):
             await populated_store.vector_search([0.1] * 1024, limit=5)
 
-    async def test_superseded_exclusion_does_not_reduce_result_count(self, populated_store: KnowledgeStore):
+    async def test_superseded_exclusion_does_not_reduce_result_count(
+        self, populated_store: KnowledgeStore
+    ):
         """When top-N includes superseded entries, the result set should still
         contain the requested number of non-superseded entries (when available).
 
@@ -157,7 +167,10 @@ class TestVectorSearch:
 
         # Search for limit=2 with that cluster's embedding
         results = await populated_store.vector_search(
-            base_emb, limit=2, exclude_superseded=True, tags=["test"],
+            base_emb,
+            limit=2,
+            exclude_superseded=True,
+            tags=["test"],
         )
 
         # The superseded entry should be excluded
