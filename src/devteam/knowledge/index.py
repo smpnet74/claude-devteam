@@ -19,6 +19,15 @@ INDEX_EMPTY = (
 )
 
 
+def _sanitize_summary(text: str) -> str:
+    """Strip characters that could break index formatting or inject instructions."""
+    # Remove newlines (prevents breaking out of bullet list)
+    text = text.replace("\n", " ").replace("\r", "")
+    # Remove markdown heading markers
+    text = text.lstrip("#").strip()
+    return text
+
+
 class MemoryIndexBuilder:
     """Builds a compact memory index from SurrealDB for agent context injection.
 
@@ -57,6 +66,7 @@ class MemoryIndexBuilder:
             WHERE sharing = "shared"
                OR project = $project
             ORDER BY created_at DESC
+            LIMIT 200
             """,
             {"project": project},
         )
@@ -110,12 +120,14 @@ class MemoryIndexBuilder:
             topic_verified: dict[str, bool] = defaultdict(lambda: False)
 
             for entry in entries:
-                summary = entry.get("summary", "Unknown")
+                summary = _sanitize_summary(entry.get("summary", "Unknown"))
                 topic_counts[summary] += 1
                 if entry.get("verified"):
                     topic_verified[summary] = True
 
-            for topic, count in topic_counts.items():
+            max_topics = 10
+            topic_items = list(topic_counts.items())
+            for topic, count in topic_items[:max_topics]:
                 suffix_parts = []
                 if count > 1:
                     suffix_parts.append(f"{count} entries")
@@ -125,6 +137,10 @@ class MemoryIndexBuilder:
                     suffix_parts.append("verified")
                 suffix = ", ".join(suffix_parts)
                 lines.append(f"- {topic} ({suffix})")
+
+            overflow = len(topic_items) - max_topics
+            if overflow > 0:
+                lines.append(f"- ... and {overflow} more topics")
 
             lines.append("")  # blank line between sections
 

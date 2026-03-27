@@ -82,10 +82,22 @@ class TestQueryKnowledgeTool:
         result = await query_tool.query("anything", scope="all")
         assert isinstance(result, str)
 
-    async def test_query_increments_access_count(self, query_tool, populated_store):
-        await query_tool.query("Fly.io deployment")
-        # Access counts should be incremented for returned results
-        # (verified indirectly through the store)
+    async def test_query_increments_access_count(self, populated_store, mock_embedder):
+        # Use shared scope so the Fly.io entry (sharing=shared) is included
+        tool = QueryKnowledgeTool(
+            store=populated_store,
+            embedder=mock_embedder,
+            current_project="myapp",
+            agent_role="cloud_engineer",
+        )
+        result = await tool.query("Fly.io deployment", scope="shared")
+        # If no results came back (SurrealDB mem:// KNN may vary), skip assertion
+        if "No relevant" in result or "No sufficiently" in result:
+            pytest.skip("SurrealDB in-memory KNN did not return results")
+        # Verify access count was incremented for returned results
+        rows = await populated_store.db.query("SELECT * FROM knowledge")
+        accessed = [r for r in (rows or []) if r.get("access_count", 0) > 0]
+        assert len(accessed) > 0, "Expected at least one entry with access_count > 0 after query"
 
     async def test_query_no_results(self, query_tool):
         # Mock embedder to return an embedding far from any entry

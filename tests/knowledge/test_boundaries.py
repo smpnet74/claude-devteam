@@ -79,6 +79,11 @@ class TestSecretScanning:
         scan_for_secrets("Fly.io requires HEALTHCHECK in Dockerfile")
         scan_for_secrets("Run pytest with the -v flag for verbose output")
 
+    def test_detects_password_with_dollar_signs(self):
+        """Literal $ in passwords should NOT be skipped as a placeholder."""
+        with pytest.raises(SecretDetectedError):
+            scan_for_secrets('password = "pa$$word123"')
+
     def test_allows_placeholder_patterns(self):
         # Placeholder patterns should not trigger
         scan_for_secrets("Set API_KEY=<your-key-here>")

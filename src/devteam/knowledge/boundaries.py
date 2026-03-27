@@ -95,8 +95,10 @@ def scan_for_secrets(content: str) -> None:
         match = pattern.search(content)
         if match:
             matched_text = match.group(0)
-            # Skip placeholder patterns
-            if any(p in matched_text for p in ("${", "<", "$")):
+            # Skip placeholder patterns -- but not literal $ in passwords
+            if any(p in matched_text for p in ("${", "<")) or re.search(
+                r"\$[A-Z_]", matched_text
+            ):
                 continue
             raise SecretDetectedError(
                 f"Potential {description} detected in knowledge content. "
