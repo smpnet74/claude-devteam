@@ -51,7 +51,11 @@ class MemoryIndexBuilder:
             Formatted markdown string suitable for agent context injection.
             Stays compact (~30-50 lines) regardless of knowledge base size.
         """
-        entries = await self._fetch_relevant_entries(project)
+        try:
+            entries = await self._fetch_relevant_entries(project)
+        except Exception as e:
+            logger.error("Failed to fetch entries for memory index: %s", e)
+            return INDEX_EMPTY
 
         if not entries:
             return INDEX_EMPTY
@@ -126,3 +130,24 @@ class MemoryIndexBuilder:
             lines.append("")  # blank line between sections
 
         return "\n".join(lines)
+
+
+async def build_memory_index_safe(
+    store: KnowledgeStore | None,
+    project: str,
+) -> str:
+    """Build memory index with graceful degradation.
+
+    Returns empty/minimal index if SurrealDB is unavailable.
+    This is the function called by the orchestrator -- never crashes.
+    """
+    if store is None or not store.is_connected:
+        logger.warning("Knowledge store unavailable -- returning empty index")
+        return INDEX_EMPTY
+
+    try:
+        builder = MemoryIndexBuilder(store)
+        return await builder.build(project=project)
+    except Exception as e:
+        logger.error("Failed to build memory index: %s", e)
+        return INDEX_EMPTY

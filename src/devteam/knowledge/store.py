@@ -30,6 +30,22 @@ SCHEMA_STATEMENTS = [
     "DEFINE FIELD IF NOT EXISTS verified ON knowledge TYPE bool DEFAULT false",
     "DEFINE FIELD IF NOT EXISTS access_count ON knowledge TYPE int DEFAULT 0",
     f"DEFINE INDEX IF NOT EXISTS knowledge_vec ON knowledge FIELDS embedding HNSW DIMENSION {EMBEDDING_DIMENSIONS} DIST COSINE",
+    # Materialized index table for fast stats lookups
+    "DEFINE TABLE IF NOT EXISTS knowledge_index SCHEMAFULL",
+    "DEFINE FIELD IF NOT EXISTS sections ON knowledge_index TYPE option<array>",
+    "DEFINE FIELD IF NOT EXISTS entry_count ON knowledge_index TYPE int DEFAULT 0",
+    "DEFINE FIELD IF NOT EXISTS rebuilt_at ON knowledge_index TYPE option<datetime>",
+    # Event: refresh the materialized index on every knowledge write
+    """DEFINE EVENT IF NOT EXISTS refresh_index ON knowledge
+        WHEN $event IN ["CREATE", "UPDATE", "DELETE"]
+        THEN {
+            LET $stats = (SELECT tags, count() AS cnt, math::max(created_at) AS last_updated FROM knowledge GROUP BY tags);
+            LET $total = (SELECT count() AS cnt FROM knowledge GROUP ALL);
+            UPSERT knowledge_index:current SET
+                sections = $stats,
+                entry_count = $total[0].cnt OR 0,
+                rebuilt_at = time::now();
+        }""",
 ]
 
 
@@ -329,6 +345,87 @@ class KnowledgeStore:
         }
 
     # ------------------------------------------------------------------
+    # Materialized index
+    # ------------------------------------------------------------------
+
+    async def get_materialized_index(self) -> dict[str, Any] | None:
+        """Get the pre-computed materialized index record.
+
+        The materialized index is updated automatically by a SurrealDB event
+        whenever a knowledge entry is created, updated, or deleted.
+        """
+        result = await self.db.query("SELECT * FROM knowledge_index:current")
+        if not result:
+            return None
+        row = result[0] if isinstance(result, list) else result
+        if isinstance(row, dict) and "result" in row:
+            rows = row["result"]
+            return rows[0] if rows else None
+        return row if isinstance(row, dict) and row.get("entry_count") is not None else None
+
+    # ------------------------------------------------------------------
+    # Decay & consolidation queries
+    # ------------------------------------------------------------------
+
+    async def get_entries_by_access_count(
+        self,
+        min_count: int | None = None,
+        max_count: int | None = None,
+    ) -> list[dict[str, Any]]:
+        """Get entries filtered by access count range."""
+        conditions: list[str] = []
+        params: dict[str, Any] = {}
+
+        if min_count is not None:
+            conditions.append("access_count >= $min_count")
+            params["min_count"] = min_count
+        if max_count is not None:
+            conditions.append("access_count <= $max_count")
+            params["max_count"] = max_count
+
+        where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+        result = await self.db.query(
+            f"SELECT * FROM knowledge {where} ORDER BY access_count ASC",
+            params,
+        )
+        rows = self._extract_rows(result)
+        return [self._normalize_row(r) for r in rows]
+
+    async def get_decay_candidates(
+        self,
+        min_age_hours: int = 168,  # 7 days
+        max_access_count: int = 0,
+    ) -> list[dict[str, Any]]:
+        """Get knowledge entries that are candidates for decay (removal).
+
+        Default: entries older than 7 days with zero access.
+        """
+        result = await self.db.query(
+            """
+            SELECT * FROM knowledge
+            WHERE access_count <= $max_count
+              AND created_at < time::now() - $age_duration
+              AND verified = false
+            ORDER BY access_count ASC, created_at ASC
+            """,
+            {
+                "max_count": max_access_count,
+                "age_duration": f"{min_age_hours}h",
+            },
+        )
+        rows = self._extract_rows(result)
+        return [self._normalize_row(r) for r in rows]
+
+    async def get_superseded_ids(self) -> list[str]:
+        """Return IDs of all knowledge entries that have been superseded."""
+        rows = await self.db.query("SELECT ->supersedes.out AS superseded FROM knowledge")
+        superseded: set[str] = set()
+        for row in rows or []:
+            for item in row.get("superseded") or []:
+                superseded.add(str(item))
+        return list(superseded)
+
+    # ------------------------------------------------------------------
     # Graph relationship operations
     # ------------------------------------------------------------------
 
@@ -403,15 +500,6 @@ class KnowledgeStore:
         row = rows[0] if isinstance(rows, list) else rows
         items = row.get(key, [])
         return [{"id": str(item)} for item in items] if items else []
-
-    async def get_superseded_ids(self) -> list[str]:
-        """Return IDs of all knowledge entries that have been superseded."""
-        rows = await self.db.query("SELECT ->supersedes.out AS superseded FROM knowledge")
-        superseded: set[str] = set()
-        for row in rows or []:
-            for item in row.get("superseded") or []:
-                superseded.add(str(item))
-        return list(superseded)
 
     # ------------------------------------------------------------------
     # Vector search
@@ -525,6 +613,29 @@ class KnowledgeStore:
             table, record = entry_id.split(":", 1)
             return RecordID(table, record)
         return entry_id
+
+    @staticmethod
+    def _extract_rows(result: Any) -> list[dict[str, Any]]:
+        """Extract a list of row dicts from a SurrealDB query response.
+
+        SurrealDB mem:// returns rows directly as ``list[dict]``.
+        Some versions wrap them in ``[{"result": [...]}]``.
+        """
+        if not result:
+            return []
+        # Unwrap [{"result": [...], "status": "OK"}] envelope
+        if (
+            isinstance(result, list)
+            and len(result) == 1
+            and isinstance(result[0], dict)
+            and "result" in result[0]
+        ):
+            inner = result[0]["result"]
+            return inner if isinstance(inner, list) else []
+        # Already a plain list of row dicts
+        if isinstance(result, list) and result and isinstance(result[0], dict):
+            return result
+        return []
 
     @staticmethod
     def _normalize_row(row: dict[str, Any]) -> dict[str, Any]:

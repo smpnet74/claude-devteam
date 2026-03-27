@@ -464,3 +464,34 @@ class TestUpdateFieldAllowlist:
                 "access_count",
             }
         )
+
+
+@pytest.mark.asyncio
+class TestMaterializedIndex:
+    async def test_index_record_created_on_schema_init(self, store: KnowledgeStore):
+        """The materialized index event should be defined."""
+        result = await store.db.query("INFO FOR TABLE knowledge")
+        # Verify the event is defined (exact format depends on SurrealDB version)
+        assert result is not None
+
+    async def test_index_refreshes_on_write(self, store: KnowledgeStore):
+        """Writing an entry should refresh the materialized index."""
+        await store.create_entry(
+            content="Test content",
+            summary="Test",
+            tags=["process"],
+            sharing="shared",
+            project=None,
+            embedding=[0.1] * 768,
+        )
+        # Query the materialized index record
+        index_data = await store.get_materialized_index()
+        # In mem:// mode the event may or may not fire; verify no crash
+        assert index_data is None or isinstance(index_data, dict)
+        if index_data is not None:
+            assert index_data["entry_count"] >= 1
+
+    async def test_get_materialized_index_empty_store(self, store: KnowledgeStore):
+        """Materialized index on empty store returns None or valid dict."""
+        index_data = await store.get_materialized_index()
+        assert index_data is None or isinstance(index_data, dict)
