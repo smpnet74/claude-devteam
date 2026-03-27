@@ -42,42 +42,49 @@ def prioritize_task(
     Returns:
         PrioritizeResult with success status and message.
     """
-    # Check if the task exists and is pending
-    row = db.execute(
-        """
-        SELECT id, status FROM agent_queue
-        WHERE job_id = ? AND task_id = ? AND status = ?
-        """,
-        (job_id, task_id, PENDING),
-    ).fetchone()
-
-    if row is None:
-        # Check if it exists at all
-        exists = db.execute(
-            "SELECT id, status FROM agent_queue WHERE job_id = ? AND task_id = ?",
-            (job_id, task_id),
+    # Atomic SELECT-then-UPDATE: BEGIN IMMEDIATE acquires a write lock
+    # so no other connection can modify the row between our check and update.
+    db.execute("BEGIN IMMEDIATE")
+    try:
+        row = db.execute(
+            """
+            SELECT id, status FROM agent_queue
+            WHERE job_id = ? AND task_id = ? AND status = ?
+            """,
+            (job_id, task_id, PENDING),
         ).fetchone()
-        if exists is None:
+
+        if row is None:
+            # Check if it exists at all
+            exists = db.execute(
+                "SELECT id, status FROM agent_queue WHERE job_id = ? AND task_id = ?",
+                (job_id, task_id),
+            ).fetchone()
+            db.rollback()
+            if exists is None:
+                return PrioritizeResult(
+                    success=False,
+                    message=f"Task {job_id}/{task_id} not found in queue.",
+                )
             return PrioritizeResult(
                 success=False,
-                message=f"Task {job_id}/{task_id} not found in queue.",
+                message=(f"Task {job_id}/{task_id} is {exists[1]}, can only prioritize pending tasks."),
             )
-        return PrioritizeResult(
-            success=False,
-            message=(f"Task {job_id}/{task_id} is {exists[1]}, can only prioritize pending tasks."),
+
+        db.execute(
+            "UPDATE agent_queue SET priority = ? WHERE id = ? AND status = ?",
+            (priority.to_int(), row[0], PENDING),
         )
+        db.commit()
 
-    db.execute(
-        "UPDATE agent_queue SET priority = ? WHERE id = ?",
-        (priority.to_int(), row[0]),
-    )
-    db.commit()
-
-    return PrioritizeResult(
-        success=True,
-        message=f"Task {job_id}/{task_id} priority set to {priority.name.lower()}.",
-        new_priority=priority,
-    )
+        return PrioritizeResult(
+            success=True,
+            message=f"Task {job_id}/{task_id} priority set to {priority.name.lower()}.",
+            new_priority=priority,
+        )
+    except Exception:
+        db.rollback()
+        raise
 
 
 def parse_priority_flag(value: str | None) -> Priority:

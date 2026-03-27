@@ -22,7 +22,6 @@ from devteam.concurrency.rate_limit import (
     handle_rate_limit_error,
     clear_global_pause,
     get_global_pause,
-    set_global_pause,
     DEFAULT_BACKOFF_SECONDS,
 )
 
@@ -69,32 +68,32 @@ def rate_limit_aware_invoke(
     if sleep_fn is None:
         sleep_fn = _default_sleep
 
-    # Step 1: Check if we're already paused by another workflow
-    pause_check = check_pause_before_invoke(db)
-    if pause_check.paused and pause_check.resume_at is not None:
-        wait_seconds = max(0, pause_check.resume_at - time.time())
-        sleep_fn(wait_seconds)
+    # Step 1: Wait until system is not paused (loop handles re-pause by other workflows)
+    while True:
+        pause_check = check_pause_before_invoke(db)
+        if not pause_check.paused:
+            break
+        remaining = max(0, (pause_check.resume_at or 0) - time.time())
+        if remaining <= 0:
+            break
+        sleep_fn(remaining)
 
     # Step 2: Try the invocation
     try:
         result = invoke_fn(role=role, task_id=task_id, context=context)
         return result
     except RateLimitError as e:
-        # Step 3: Set global pause, sleep, conditionally clear, retry
-        backoff_seconds = handle_rate_limit_error(
+        # Step 3: handle_rate_limit_error is the single place that sets the pause.
+        # It returns both the backoff duration and the resume_at ownership token.
+        backoff_seconds, resume_at = handle_rate_limit_error(
             db,
             e,
             default_backoff=default_backoff,
         )
-        resume_at = set_global_pause(
-            db,
-            seconds=backoff_seconds,
-            reason="rate_limit",
-        )
         sleep_fn(backoff_seconds)
-        # Only clear if our pause is still the active one
+        # Only clear if our pause is still the active one (use == not <=)
         current = get_global_pause(db)
-        if current is not None and current.resume_at is not None and current.resume_at <= resume_at:
+        if current is not None and current.resume_at is not None and current.resume_at == resume_at:
             clear_global_pause(db)
         result = invoke_fn(role=role, task_id=task_id, context=context)
         return result

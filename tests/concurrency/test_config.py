@@ -55,3 +55,15 @@ class TestConcurrencyConfig:
         config = {"rate_limit": {"default_backoff_seconds": False}}
         with pytest.raises(ValueError, match="must be a positive integer"):
             load_concurrency_config(config)
+
+    def test_general_not_dict_raises(self):
+        """Non-dict 'general' section is rejected."""
+        config = {"general": "not a dict"}
+        with pytest.raises(ValueError, match="config 'general' must be a dict"):
+            load_concurrency_config(config)
+
+    def test_rate_limit_not_dict_raises(self):
+        """Non-dict 'rate_limit' section is rejected."""
+        config = {"rate_limit": [1, 2, 3]}
+        with pytest.raises(ValueError, match="config 'rate_limit' must be a dict"):
+            load_concurrency_config(config)

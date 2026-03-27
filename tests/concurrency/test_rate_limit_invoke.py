@@ -13,6 +13,7 @@ from devteam.concurrency.rate_limit import (
     is_paused,
     get_global_pause,
     set_global_pause,
+    clear_global_pause,
     DEFAULT_BACKOFF_SECONDS,
 )
 from devteam.concurrency.queue import init_queue_table
@@ -133,7 +134,12 @@ class TestRateLimitAwareInvoke:
         """If already paused (by another workflow), waits for that pause."""
         set_global_pause(db, seconds=30)
         mock_invoke = MagicMock(return_value={"status": "completed"})
-        mock_sleep = MagicMock()
+        sleep_calls: list[float] = []
+
+        def mock_sleep_fn(seconds):
+            sleep_calls.append(seconds)
+            # Simulate time passing: clear the pause so the loop exits
+            clear_global_pause(db)
 
         result = rate_limit_aware_invoke(
             db=db,
@@ -141,13 +147,12 @@ class TestRateLimitAwareInvoke:
             role="backend",
             task_id="T-1",
             context="Build the API",
-            sleep_fn=mock_sleep,
+            sleep_fn=mock_sleep_fn,
         )
 
-        # Should have slept for the existing pause duration
-        assert mock_sleep.call_count == 1
-        sleep_seconds = mock_sleep.call_args[0][0]
-        assert 25 <= sleep_seconds <= 31
+        # Should have slept once for the existing pause duration
+        assert len(sleep_calls) == 1
+        assert 25 <= sleep_calls[0] <= 31
         # Then invoked successfully
         assert result == {"status": "completed"}
 

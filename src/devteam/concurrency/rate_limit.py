@@ -149,16 +149,18 @@ def handle_rate_limit_error(
     conn: sqlite3.Connection,
     error: Exception,
     default_backoff: int = DEFAULT_BACKOFF_SECONDS,
-) -> int:
+) -> tuple[int, float]:
     """Handle a rate limit error by setting the global pause flag.
 
     Parses the error message to extract the retry time. Falls back to
     default_backoff (which should come from config) if the error message
     can't be parsed.
 
-    Returns the number of seconds to wait.
+    This is the single place that calls set_global_pause for rate limit errors.
+    Returns (backoff_seconds, resume_at) so callers own the pause token
+    without needing to call set_global_pause again.
     """
     parsed = _parse_reset_seconds(str(error))
     seconds = parsed if parsed is not None else default_backoff
-    set_global_pause(conn, seconds=seconds, reason="rate_limit")
-    return seconds
+    resume_at = set_global_pause(conn, seconds=seconds, reason="rate_limit")
+    return seconds, resume_at

@@ -30,7 +30,11 @@ def load_concurrency_config(config: dict[str, Any]) -> ConcurrencyConfig:
         ValueError: If any value is invalid.
     """
     general = config.get("general", {})
+    if not isinstance(general, dict):
+        raise ValueError("config 'general' must be a dict")
     rate_limit = config.get("rate_limit", {})
+    if not isinstance(rate_limit, dict):
+        raise ValueError("config 'rate_limit' must be a dict")
 
     max_concurrent = general.get("max_concurrent_agents", 3)
     backoff = rate_limit.get("default_backoff_seconds", 1800)
