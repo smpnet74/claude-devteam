@@ -3,6 +3,7 @@
 import typer
 
 from devteam.cli.commands import daemon_cmd, focus_cmd, init_cmd, project_cmd
+from devteam.cli.commands.concurrency_cmd import register_concurrency_commands
 from devteam.cli.commands.git_commands import git_app
 from devteam.cli.commands.job_cmd import register_job_commands
 from devteam.cli.commands.knowledge_cmd import knowledge_app
@@ -23,6 +24,9 @@ app.add_typer(knowledge_app, name="knowledge")
 
 # Register top-level job control commands
 register_job_commands(app)
+
+# Register concurrency commands (prioritize)
+register_concurrency_commands(app)
 
 
 def main() -> None:
