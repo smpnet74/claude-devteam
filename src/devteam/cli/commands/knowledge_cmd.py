@@ -81,13 +81,17 @@ def search(
         typer.echo(f"Knowledge store unavailable: {e}", err=True)
         raise typer.Exit(1)
 
-    tool = QueryKnowledgeTool(
-        store=store,
-        embedder=embedder,
-        current_project=project or "",
-        agent_role="admin",
-    )
-    result = _run(tool.query(query, scope=scope, limit=limit))
+    try:
+        tool = QueryKnowledgeTool(
+            store=store,
+            embedder=embedder,
+            current_project=project or "",
+            agent_role="admin",
+        )
+        result = _run(tool.query(query, scope=scope, limit=limit))
+    except Exception as e:
+        typer.echo(f"Error: {e}", err=True)
+        raise typer.Exit(code=1)
     typer.echo(result)
 
 
@@ -100,7 +104,11 @@ def stats() -> None:
         typer.echo(f"Knowledge store unavailable: {e}", err=True)
         raise typer.Exit(1)
 
-    s = _run(store.get_stats_detailed())
+    try:
+        s = _run(store.get_stats_detailed())
+    except Exception as e:
+        typer.echo(f"Error: {e}", err=True)
+        raise typer.Exit(code=1)
 
     typer.echo("Knowledge Base Statistics")
     typer.echo("=" * 40)
@@ -129,7 +137,11 @@ def verify(
         typer.echo(f"Knowledge store unavailable: {e}", err=True)
         raise typer.Exit(1)
 
-    _run(store.update_entry(entry_id, verified=True))
+    try:
+        _run(store.update_entry(entry_id, verified=True))
+    except Exception as e:
+        typer.echo(f"Error: {e}", err=True)
+        raise typer.Exit(code=1)
     typer.echo(f"Marked {entry_id} as verified.")
 
 
@@ -144,20 +156,26 @@ def redact(
         typer.echo(f"Knowledge store unavailable: {e}", err=True)
         raise typer.Exit(1)
 
-    entry = _run(store.get_entry(entry_id))
-    if not entry:
-        typer.echo(f"Entry {entry_id} not found.", err=True)
-        raise typer.Exit(1)
+    try:
+        entry = _run(store.get_entry(entry_id))
+        if not entry:
+            typer.echo(f"Entry {entry_id} not found.", err=True)
+            raise typer.Exit(1)
 
-    from devteam.knowledge.embeddings import EMBEDDING_DIMENSIONS
+        from devteam.knowledge.embeddings import EMBEDDING_DIMENSIONS
 
-    _run(
-        store.update_entry(
-            entry_id,
-            content="[REDACTED]",
-            embedding=[0.0] * EMBEDDING_DIMENSIONS,
+        _run(
+            store.update_entry(
+                entry_id,
+                content="[REDACTED]",
+                embedding=[0.0] * EMBEDDING_DIMENSIONS,
+            )
         )
-    )
+    except typer.Exit:
+        raise
+    except Exception as e:
+        typer.echo(f"Error: {e}", err=True)
+        raise typer.Exit(code=1)
     typer.echo(f"Redacted content from {entry_id}. Summary preserved: {entry.get('summary', '')}")
 
 
@@ -176,28 +194,34 @@ def purge(
         typer.echo(f"Knowledge store unavailable: {e}", err=True)
         raise typer.Exit(1)
 
-    if older_than is not None:
-        candidates = _run(
-            store.get_decay_candidates(
-                min_age_hours=older_than * 24,
-                max_access_count=0,
+    try:
+        if older_than is not None:
+            candidates = _run(
+                store.get_decay_candidates(
+                    min_age_hours=older_than * 24,
+                    max_access_count=0,
+                )
             )
-        )
-        if not candidates:
-            typer.echo("No entries match purge criteria.")
-            return
-        for c in candidates:
-            _run(store.delete_entry(str(c["id"])))
-        typer.echo(f"Purged {len(candidates)} stale entries older than {older_than} days.")
-    elif project:
-        count = _run(store.delete_by_project(project))
-        typer.echo(f"Purged {count} entries for project '{project}'.")
-    elif entry_id:
-        _run(store.delete_entry(entry_id))
-        typer.echo(f"Purged entry {entry_id}.")
-    else:
-        typer.echo("Provide either an entry ID, --project, or --older-than.", err=True)
-        raise typer.Exit(1)
+            if not candidates:
+                typer.echo("No entries match purge criteria.")
+                return
+            for c in candidates:
+                _run(store.delete_entry(str(c["id"])))
+            typer.echo(f"Purged {len(candidates)} stale entries older than {older_than} days.")
+        elif project:
+            count = _run(store.delete_by_project(project))
+            typer.echo(f"Purged {count} entries for project '{project}'.")
+        elif entry_id:
+            _run(store.delete_entry(entry_id))
+            typer.echo(f"Purged entry {entry_id}.")
+        else:
+            typer.echo("Provide either an entry ID, --project, or --older-than.", err=True)
+            raise typer.Exit(1)
+    except typer.Exit:
+        raise
+    except Exception as e:
+        typer.echo(f"Error: {e}", err=True)
+        raise typer.Exit(code=1)
 
 
 @knowledge_app.command(name="export")
@@ -212,7 +236,11 @@ def export_knowledge(
         typer.echo(f"Knowledge store unavailable: {e}", err=True)
         raise typer.Exit(1)
 
-    entries = _run(store.list_all_entries(project=project))
+    try:
+        entries = _run(store.list_all_entries(project=project))
+    except Exception as e:
+        typer.echo(f"Error: {e}", err=True)
+        raise typer.Exit(code=1)
 
     # Remove embeddings from export (large, not human-readable)
     for entry in entries:
@@ -230,8 +258,12 @@ def export_knowledge(
     json_str = json.dumps(data, indent=2, default=str)
 
     if output:
-        with open(output, "w") as f:
-            f.write(json_str)
+        output_path = Path(output)
+        try:
+            output_path.write_text(json_str)
+        except OSError as e:
+            typer.echo(f"Error writing to {output_path}: {e}", err=True)
+            raise typer.Exit(code=1)
         typer.echo(f"Exported {len(entries)} entries to {output}")
     else:
         typer.echo(json_str)

@@ -125,9 +125,24 @@ class KnowledgeStore:
             logger.info("Knowledge store disconnected")
 
     async def _init_schema(self) -> None:
-        """Initialize the knowledge table schema (idempotent)."""
+        """Initialize the knowledge table schema (idempotent).
+
+        The DEFINE EVENT statement uses ``$event IN [...]`` syntax which may
+        not be supported in all SurrealDB backends (e.g. mem:// mode).  If it
+        fails we log a warning and continue -- the materialized index simply
+        won't auto-refresh, which is acceptable for dev/test environments.
+        """
         for stmt in SCHEMA_STATEMENTS:
-            await self.db.query(stmt)
+            try:
+                await self.db.query(stmt)
+            except Exception as exc:
+                if "DEFINE EVENT" in stmt:
+                    logger.warning(
+                        "DEFINE EVENT failed (may be unsupported in this backend): %s",
+                        exc,
+                    )
+                else:
+                    raise
         logger.debug("Knowledge schema initialized")
 
     # ------------------------------------------------------------------

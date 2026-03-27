@@ -166,6 +166,24 @@ class TestFullKnowledgeLifecycle:
         # Mark old as superseded
         await store.add_relationship(new_result.entry_ids[0], "supersedes", old_result.entry_ids[0])
 
+        # Verify superseded ID is tracked
+        superseded_ids = await store.get_superseded_ids()
+        assert old_result.entry_ids[0] in superseded_ids, (
+            "Superseded entry should appear in get_superseded_ids()"
+        )
+
+        # Verify superseded entry is excluded from vector search results
+        query_embedding = await mock_embedder.embed("Fly.io deployment")
+        search_results = await store.vector_search(
+            embedding=query_embedding,
+            limit=10,
+            exclude_superseded=True,
+        )
+        returned_ids = [str(r["id"]) for r in search_results]
+        assert old_result.entry_ids[0] not in returned_ids, (
+            "Superseded entry should be excluded from vector_search results"
+        )
+
         # Query should return new, not old
         tool = QueryKnowledgeTool(
             store=store,
@@ -179,6 +197,9 @@ class TestFullKnowledgeLifecycle:
         # If results came back, superseded entry should be excluded
         if "No relevant" not in result and "No sufficiently" not in result:
             assert "v2" in result or "rolling" in result
+            assert "v1" not in result, (
+                "Superseded v1 entry should not appear in query results"
+            )
 
     async def test_project_scoping_in_lifecycle(self, store, mock_embedder):
         """Project-scoped knowledge should not leak to other projects."""
@@ -215,15 +236,33 @@ class TestFullKnowledgeLifecycle:
         )
 
         # Query from project A context should not see project B knowledge
-        tool = QueryKnowledgeTool(
+        tool_a = QueryKnowledgeTool(
             store=store,
             embedder=mock_embedder,
             current_project="project-a",
             agent_role="data_engineer",
         )
-        result = await tool.query("database", scope="project")
-        # Result should be scoped -- exact assertion depends on vector search behavior
-        assert isinstance(result, str)
+        result_a = await tool_a.query("database", scope="project")
+        assert isinstance(result_a, str)
+        # If results came back, they must NOT contain project B content
+        if "No relevant" not in result_a and "No sufficiently" not in result_a:
+            assert "PostgreSQL" not in result_a, (
+                "Project A query should not see Project B's PostgreSQL entry"
+            )
+
+        # Verify from the other direction: project B should not see project A
+        tool_b = QueryKnowledgeTool(
+            store=store,
+            embedder=mock_embedder,
+            current_project="project-b",
+            agent_role="data_engineer",
+        )
+        result_b = await tool_b.query("database", scope="project")
+        assert isinstance(result_b, str)
+        if "No relevant" not in result_b and "No sufficiently" not in result_b:
+            assert "MongoDB" not in result_b, (
+                "Project B query should not see Project A's MongoDB entry"
+            )
 
     async def test_graceful_degradation_full_cycle(self, mock_embedder):
         """System should work end-to-end even when SurrealDB is unavailable."""
@@ -357,6 +396,30 @@ class TestQueryToolDefinition:
         # tool_definition() is synchronous and should not require any async calls
         defn = tool.tool_definition()
         assert defn is not None
+
+    async def test_tool_schema_rejects_invalid_scope(self, store, mock_embedder):
+        """Passing an invalid scope value should be detectable via the schema enum."""
+        tool = QueryKnowledgeTool(
+            store=store,
+            embedder=mock_embedder,
+            current_project="myapp",
+            agent_role="backend",
+        )
+        defn = tool.tool_definition()
+
+        valid_scopes = set(defn["parameters"]["properties"]["scope"]["enum"])
+        assert "invalid_scope" not in valid_scopes, (
+            "Schema enum should not include arbitrary values"
+        )
+
+        # Verify schema enforces required fields
+        assert "query" in defn["parameters"]["required"]
+
+        # Verify query must be a string
+        assert defn["parameters"]["properties"]["query"]["type"] == "string"
+
+        # Verify scope has a constrained set of valid values
+        assert valid_scopes == {"shared", "my_role", "project", "all"}
 
 
 @pytest.mark.asyncio
