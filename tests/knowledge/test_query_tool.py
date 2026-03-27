@@ -110,6 +110,24 @@ class TestQueryKnowledgeTool:
         result = await query_tool.query("anything")
         assert "unavailable" in result.lower() or "error" in result.lower()
 
+    async def test_my_role_scope_for_chief_architect(self, populated_store, mock_embedder):
+        """Previously unsupported roles like chief_architect should have domain tags."""
+        from devteam.knowledge.query_tool import _ROLE_DOMAIN_TAGS
+
+        # Verify the role is now in the mapping
+        assert "chief_architect" in _ROLE_DOMAIN_TAGS
+        assert "architecture" in _ROLE_DOMAIN_TAGS["chief_architect"]
+
+        tool = QueryKnowledgeTool(
+            store=populated_store,
+            embedder=mock_embedder,
+            current_project="myapp",
+            agent_role="chief_architect",
+        )
+        result = await tool.query("system design", scope="my_role")
+        # Should not error -- the role is recognized and produces a result string
+        assert isinstance(result, str)
+
     async def test_tool_definition_schema(self, query_tool):
         """Tool definition should have the expected schema for Agent SDK."""
         schema = query_tool.tool_definition()
