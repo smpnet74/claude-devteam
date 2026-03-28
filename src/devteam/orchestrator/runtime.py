@@ -7,9 +7,13 @@ Module-level singletons (_invoker, etc.) are set by bootstrap at startup.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from devteam.knowledge.store import KnowledgeStore
 
 from dbos import DBOS
 
@@ -53,7 +57,7 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 _invoker: AgentInvoker | None = None
-_knowledge_store: Any = None  # KnowledgeStore | None
+_knowledge_store: KnowledgeStore | None = None
 _config: dict[str, Any] = {}
 
 
@@ -301,6 +305,7 @@ async def post_pr_review_step(
             )
         except Exception as e:
             if not gate.required:
+                logger.warning("Non-required gate '%s' invocation failed: %s", gate.name, e)
                 failed_gates.append(gate.name)
                 continue
             raise RuntimeError(f"Post-PR review gate '{gate.name}' invocation failed: {e}") from e
@@ -309,6 +314,7 @@ async def post_pr_review_step(
             result = ReviewResult.model_validate(raw)
         except Exception as e:
             if not gate.required:
+                logger.warning("Non-required gate '%s' returned invalid payload: %s", gate.name, e)
                 failed_gates.append(gate.name)
                 continue
             raise RuntimeError(
@@ -355,7 +361,7 @@ async def create_worktree_step(
     Returns:
         WorktreeInfo with path and branch info.
     """
-    return create_worktree(repo_root, branch, base_ref=base_ref)
+    return await asyncio.to_thread(create_worktree, repo_root, branch, base_ref=base_ref)
 
 
 # ---------------------------------------------------------------------------
@@ -387,7 +393,8 @@ async def create_pr_step(
     Returns:
         PRInfo with number and URL.
     """
-    return create_pr(
+    return await asyncio.to_thread(
+        create_pr,
         cwd=cwd,
         title=title,
         body=body,
@@ -425,7 +432,8 @@ async def cleanup_step(
         CleanupResult with actions taken and any errors.
     """
     if mode == "merge":
-        return cleanup_after_merge(
+        return await asyncio.to_thread(
+            cleanup_after_merge,
             repo_root=repo_root,
             branch=branch,
             worktree_path=worktree_path,
@@ -433,7 +441,8 @@ async def cleanup_step(
     elif mode == "cancel":
         if pr_number is None:
             raise ValueError("cleanup_step in 'cancel' mode requires pr_number")
-        return cleanup_single_pr(
+        return await asyncio.to_thread(
+            cleanup_single_pr,
             repo_root=repo_root,
             branch=branch,
             pr_number=pr_number,

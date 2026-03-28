@@ -466,7 +466,14 @@ class TestCreatePRStep:
 
             result = await _run()
             assert result.number == 42
-            mock_pr.assert_called_once()
+            mock_pr.assert_called_once_with(
+                cwd=tmp_path,
+                title="Add login",
+                body="Implements login flow",
+                branch="feat/login",
+                base="main",
+                upstream_repo=None,
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -500,7 +507,11 @@ class TestCleanupStep:
 
             result = await _run()
             assert result.success is True
-            mock_cleanup.assert_called_once()
+            mock_cleanup.assert_called_once_with(
+                repo_root=tmp_path,
+                branch="feat/login",
+                worktree_path=None,
+            )
 
     @pytest.mark.asyncio
     async def test_cleanup_cancel_without_pr_number_raises(
@@ -544,4 +555,10 @@ class TestCleanupStep:
 
             result = await _run()
             assert result.success is True
-            mock_cleanup.assert_called_once()
+            mock_cleanup.assert_called_once_with(
+                repo_root=tmp_path,
+                branch="feat/login",
+                pr_number=42,
+                worktree_path=None,
+                comment="Cancelled by operator",
+            )
