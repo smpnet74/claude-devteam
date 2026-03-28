@@ -28,6 +28,7 @@ class GeneralConfig(BaseModel):
     """General operational settings."""
 
     max_concurrent_agents: int = Field(default=3, gt=0)
+    project_name: str = ""
 
 
 class ModelsConfig(BaseModel):
@@ -92,6 +93,13 @@ class GitConfig(BaseModel):
     worktree_dir: str = ".worktrees"
 
 
+class InteractiveConfig(BaseModel):
+    """Interactive terminal UI settings."""
+
+    poll_interval_ms: int = Field(default=200, gt=0)
+    max_log_lines: int = Field(default=1000, gt=0)
+
+
 class ProjectInfo(BaseModel):
     """Per-project metadata."""
 
@@ -124,6 +132,7 @@ class DevteamConfig(BaseModel):
     pr: PRConfig = Field(default_factory=PRConfig)
     git: GitConfig = Field(default_factory=GitConfig)
     execution: ExecutionConfig = Field(default_factory=ExecutionConfig)
+    interactive: InteractiveConfig = Field(default_factory=InteractiveConfig)
 
 
 class ProjectConfig(BaseModel):
