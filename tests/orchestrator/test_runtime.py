@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from dbos import DBOS
 
-from devteam.agents.contracts import (
+from devteam.orchestrator.schemas import (
     DecompositionResult,
     RoutePath,
     RoutingResult,
@@ -111,7 +111,9 @@ class TestRouteIntakeStep:
 
             @DBOS.workflow()
             async def _run() -> RoutingResult:
-                return await route_intake_step(ctx)
+                return await route_intake_step(
+                    ctx, project_name="myproj", worktree_path="/tmp/repo"
+                )
 
             result = await _run()
             assert result.path == RoutePath.RESEARCH
@@ -209,6 +211,41 @@ class TestPostPRReviewStep:
             assert result.all_passed is True
 
     @pytest.mark.asyncio
+    async def test_review_required_gate_failure_short_circuits(self, dbos_launch: Any) -> None:
+        """When a required gate fails, the chain stops and all_passed is False."""
+        from devteam.orchestrator.runtime import post_pr_review_step
+
+        review_dict = _make_review_result_dict("needs_revision")
+
+        call_count = 0
+        original_mock = AsyncMock(return_value=review_dict)
+
+        async def counting_mock(*args: Any, **kwargs: Any) -> dict[str, Any]:
+            nonlocal call_count
+            call_count += 1
+            return await original_mock(*args, **kwargs)
+
+        with patch(
+            "devteam.orchestrator.runtime.invoke_agent_step",
+            side_effect=counting_mock,
+        ):
+
+            @DBOS.workflow()
+            async def _run():
+                return await post_pr_review_step(
+                    work_type=WorkType.CODE,
+                    pr_context="PR diff content",
+                    project_name="test",
+                    worktree_path="/tmp",
+                )
+
+            result = await _run()
+            assert result.all_passed is False
+            assert len(result.failed_gates) >= 1
+            # Should stop after first required gate fails, not run all gates
+            assert call_count == 1
+
+    @pytest.mark.asyncio
     async def test_review_skips_qa_for_docs_only(self, dbos_launch: Any) -> None:
         """QA gate is skipped when only doc files changed."""
         from devteam.orchestrator.runtime import post_pr_review_step
@@ -271,14 +308,76 @@ class TestInvokeAgentStep:
             assert result == {"path": "research", "reasoning": "test"}
             mock_invoker.invoke.assert_awaited_once()
         finally:
-            set_invoker(None)  # type: ignore[arg-type]
+            set_invoker(None)
+
+    @pytest.mark.asyncio
+    async def test_invoke_wraps_invoker_errors(self, dbos_launch: Any) -> None:
+        """invoke_agent_step wraps exceptions with role/project context."""
+        from devteam.orchestrator.runtime import invoke_agent_step, set_invoker
+
+        mock_invoker = MagicMock()
+        mock_invoker.invoke = AsyncMock(side_effect=ConnectionError("LLM timeout"))
+
+        set_invoker(mock_invoker)
+        try:
+
+            @DBOS.workflow()
+            async def _run() -> dict[str, Any]:
+                return await invoke_agent_step(
+                    role="backend_engineer",
+                    prompt="test",
+                    worktree_path="/tmp/repo",
+                    project_name="myproj",
+                )
+
+            with pytest.raises(RuntimeError, match="backend_engineer") as exc_info:
+                await _run()
+            assert "myproj" in str(exc_info.value)
+            assert "LLM timeout" in str(exc_info.value)
+        finally:
+            set_invoker(None)
+
+    @pytest.mark.asyncio
+    async def test_invoke_augments_prompt_with_knowledge(self, dbos_launch: Any) -> None:
+        """invoke_agent_step prepends knowledge index to prompt when available."""
+        from devteam.orchestrator.runtime import invoke_agent_step, set_invoker
+
+        mock_invoker = MagicMock()
+        mock_result = MagicMock()
+        mock_result.model_dump.return_value = {"answer": "ok"}
+        mock_invoker.invoke = AsyncMock(return_value=mock_result)
+
+        set_invoker(mock_invoker)
+        try:
+            with patch(
+                "devteam.orchestrator.runtime.build_memory_index_safe",
+                new_callable=AsyncMock,
+                return_value="## Available Knowledge\n- Auth patterns: JWT preferred",
+            ):
+
+                @DBOS.workflow()
+                async def _run() -> dict[str, Any]:
+                    return await invoke_agent_step(
+                        role="ceo",
+                        prompt="original prompt",
+                        worktree_path="/tmp",
+                        project_name="test",
+                    )
+
+                await _run()
+                call_args = mock_invoker.invoke.call_args
+                task_prompt = call_args.kwargs["task_prompt"]
+                assert "Available Knowledge" in task_prompt
+                assert "original prompt" in task_prompt
+        finally:
+            set_invoker(None)
 
     @pytest.mark.asyncio
     async def test_invoke_without_invoker_raises(self, dbos_launch: Any) -> None:
         """invoke_agent_step raises RuntimeError when no invoker is configured."""
         from devteam.orchestrator.runtime import invoke_agent_step, set_invoker
 
-        set_invoker(None)  # type: ignore[arg-type]
+        set_invoker(None)
 
         @DBOS.workflow()
         async def _run() -> dict[str, Any]:
@@ -402,6 +501,24 @@ class TestCleanupStep:
             result = await _run()
             assert result.success is True
             mock_cleanup.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_cleanup_cancel_without_pr_number_raises(
+        self, dbos_launch: Any, tmp_path: Path
+    ) -> None:
+        """cleanup_step in cancel mode raises ValueError without pr_number."""
+        from devteam.orchestrator.runtime import cleanup_step
+
+        @DBOS.workflow()
+        async def _run() -> Any:
+            return await cleanup_step(
+                repo_root=tmp_path,
+                branch="feat/login",
+                mode="cancel",
+            )
+
+        with pytest.raises(ValueError, match="pr_number"):
+            await _run()
 
     @pytest.mark.asyncio
     async def test_cleanup_cancel(self, dbos_launch: Any, tmp_path: Path) -> None:
