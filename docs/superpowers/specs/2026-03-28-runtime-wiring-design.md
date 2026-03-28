@@ -228,8 +228,8 @@ Terminal UI (polling):
 Operator types: /answer Q-1 Use JWT
 
 Terminal UI:
-  5. Looks up Q-1 → owned by child workflow for T-2 (UUID: abc-123)
-  6. await DBOS.send_async(destination_id="abc-123", message="Use JWT", topic="answer:Q-1")
+  5. Looks up display alias Q-1 → maps to internal ID Q-T2-1, owned by child workflow for T-2 (UUID: abc-123)
+  6. await DBOS.send_async(destination_id="abc-123", message="Use JWT", topic="answer:Q-T2-1")
 
 Child workflow (T-2):
   7. DBOS.recv(topic="answer:Q-T2-1") unblocks with "Use JWT"
@@ -644,15 +644,14 @@ async def execute_task(job_id: str, parent_workflow_id: str, task: TaskDecomposi
         else:
             review = await invoke_agent_step(
                 role=peer_reviewer,
-            prompt=build_review_prompt(impl, task),
-            worktree_path=worktree,
-            project_name=project_name,
-        )
-
-        if review.needs_revision:
-            revision_feedback = format_revision_feedback(review)
-            revision_count += 1
-            continue
+                prompt=build_review_prompt(impl, task),
+                worktree_path=worktree,
+                project_name=project_name,
+            )
+            if review.needs_revision:
+                revision_feedback = format_revision_feedback(review)
+                revision_count += 1
+                continue
 
         # EM review
         em_review = await invoke_agent_step(...)
