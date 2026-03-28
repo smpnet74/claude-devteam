@@ -164,7 +164,7 @@ When a Tier 1 question arrives:
 
 **Task ID (`T-1`)** maps to a child workflow. Each task's DBOS workflow_id is stored as a DBOS event on the parent workflow: `set_event("task:T-1:workflow_id", child_uuid)`.
 
-**Question ID (`Q-1`)** is a DBOS message topic. Questions are sent from child workflows to the parent via `send("question:Q-1", question_data)`. Answers are sent from the UI to the specific child workflow via `send(child_workflow_id, "answer:Q-1", answer_text)`.
+**Question ID (`Q-1`)** is a DBOS message topic. Questions are sent from child workflows to the parent via `DBOS.send_async(destination_id=parent_workflow_id, message=question_data, topic="question:Q-1")`. Answers are sent from the UI to the specific child workflow via `await DBOS.send_async(destination_id=child_workflow_id, message=answer_text, topic="answer:Q-1")`.
 
 ---
 
@@ -181,14 +181,15 @@ When a Tier 1 question arrives:
 
 **Child workflows (`execute_task`):**
 - Own individual task execution (engineer → peer review → EM review → PR)
-- Raise questions via `DBOS.set_event_async("question:Q-1", question_data)` on the parent workflow
+- Raise questions via `DBOS.send_async(destination_id=parent_workflow_id, message=question_data, topic="question:Q-1")` — sends to the parent workflow
 - Wait for answers via `DBOS.recv_async("answer:Q-1")`
 - Emit log events on themselves (the UI polls both parent and child events)
+- Receive `parent_workflow_id` as a parameter so they can send messages to the parent
 
 **Terminal UI:**
 - Polls events from the parent workflow AND all active child workflows
-- Routes `/answer Q-1 text` by looking up which child workflow owns Q-1, then `DBOS.send_async(child_workflow_id, "answer:Q-1", text)`
-- Routes `/comment T-1 text` by looking up T-1's child workflow_id, then `DBOS.send_async(child_workflow_id, "comment", text)`
+- Routes `/answer Q-1 text` by looking up which child workflow owns Q-1, then `await DBOS.send_async(destination_id=child_workflow_id, message=text, topic="answer:Q-1")`
+- Routes `/comment T-1 text` by looking up T-1's child workflow_id, then `await DBOS.send_async(destination_id=child_workflow_id, message=text, topic="comment")`
 - Routes `/pause` and `/cancel` to the parent workflow
 
 ### Message Flow Diagram
@@ -198,7 +199,7 @@ Operator types: /answer Q-1 Use JWT
 
 Terminal UI:
   1. Looks up Q-1 → owned by child workflow for T-2 (UUID: abc-123)
-  2. DBOS.send_async("abc-123", "answer:Q-1", "Use JWT")
+  2. await DBOS.send_async(destination_id="abc-123", message="Use JWT", topic="answer:Q-1")
 
 Child workflow (T-2):
   3. answer = await DBOS.recv_async("answer:Q-1")  # unblocks
@@ -361,10 +362,14 @@ The spec's "modified" category means **adapt the existing tested logic**, not re
 | `tests/test_models.py` | Keep unchanged | Entity models don't change |
 | `tests/test_state.py` | Keep unchanged | State machines don't change |
 | `tests/test_config.py` | Keep unchanged | Config loading doesn't change |
+| `tests/test_database.py` | **Delete** | daemon/database.py removed |
 | `tests/test_daemon.py` | **Delete** | Daemon is removed |
+| `tests/test_init_agents.py` | Keep unchanged | Agent initialization tests don't change |
+| `tests/test_project_agents.py` | Keep unchanged | Project agent tests don't change |
 | `tests/test_cli.py` | **Adapt** | Job commands change to use DBOS workflows |
 | `tests/test_integration.py` | **Replace** | New end-to-end tests with DBOS |
 | `tests/agents/*` | Keep unchanged | Agent library tests don't change |
+| `tests/orchestrator/test_schemas.py` | Keep unchanged | Schema tests don't change |
 | `tests/orchestrator/test_routing.py` | **Adapt** | Add async, mock DBOS context |
 | `tests/orchestrator/test_decomposition.py` | **Adapt** | Add async, mock DBOS context |
 | `tests/orchestrator/test_task_workflow.py` | **Adapt** | Restructure for DBOS workflow pattern |
@@ -425,10 +430,11 @@ async def execute_job(job_id: str, spec: str, plan: str, config: dict) -> JobRes
         emit_event(job_id, "decomposed", f"{len(decomposition.tasks)} tasks")
 
     # Step 3: Execute tasks via child workflows
+    parent_workflow_id = DBOS.workflow_id  # pass to children so they can send messages back
     task_handles = {}
     for task in get_ready_tasks(decomposition):
         handle = await DBOS.start_workflow_async(
-            execute_task, job_id, task, config
+            execute_task, job_id, parent_workflow_id, task, config
         )
         task_handles[task.id] = handle
 
@@ -448,7 +454,7 @@ async def execute_job(job_id: str, spec: str, plan: str, config: dict) -> JobRes
 
 ```python
 @DBOS.workflow()
-async def execute_task(job_id: str, task: TaskDecomposition, config: dict) -> TaskResult:
+async def execute_task(job_id: str, parent_workflow_id: str, task: TaskDecomposition, config: dict) -> TaskResult:
     # Create isolated worktree
     worktree = await create_worktree_step(task)
 
@@ -467,7 +473,7 @@ async def execute_task(job_id: str, task: TaskDecomposition, config: dict) -> Ta
         # Handle questions
         if impl.status in ("needs_clarification", "blocked"):
             question = create_question(impl, task)
-            await DBOS.set_event_async(job_id, f"question:{question.id}", question)
+            await DBOS.send_async(destination_id=parent_workflow_id, message=question, topic=f"question:{question.id}")
 
             # Wait for operator answer via DBOS messaging
             answer = await DBOS.recv_async(f"answer:{question.id}", timeout=None)
@@ -496,7 +502,7 @@ async def execute_task(job_id: str, task: TaskDecomposition, config: dict) -> Ta
 
         # Approved — create PR
         pr = await create_pr_step(task, worktree)
-        await DBOS.set_event_async(job_id, f"pr:{task.id}", pr)
+        await DBOS.send_async(destination_id=parent_workflow_id, message=pr, topic=f"pr:{task.id}")
         return TaskResult(status="completed", pr=pr)
 
     # Max revisions exceeded
@@ -582,6 +588,8 @@ async def bootstrap(spec: str, plan: str) -> WorkflowHandle:
     config = load_and_merge_config()
 
     # 2. Initialize DBOS
+    # DBOS v2.16+ uses SQLite by default (no PostgreSQL required).
+    # The system database is created automatically at ./dbos.sqlite
     DBOS.launch()
 
     # 3. Connect knowledge store (graceful degradation)
@@ -656,8 +664,9 @@ async def run_interactive_session(handle: WorkflowHandle):
 - `/verbose` mode switches a task's formatter to stream the full agent response
 
 **Command dispatch:**
-- `/answer Q-1 text` → `await DBOS.send_async(workflow_id, "answer:Q-1", text)`
-- `/pause` → `await DBOS.cancel_workflow_async(workflow_id)` (DBOS preserves state)
+- `/answer Q-1 text` → `await DBOS.send_async(destination_id=child_workflow_id, message=text, topic="answer:Q-1")`
+- `/pause` → `await DBOS.set_event_async("paused", True)` on parent workflow
+- `/resume` → `await DBOS.set_event_async("paused", False)` on parent workflow
 - `/cancel` → cancel workflow + trigger cleanup workflow
 - `/status` → read DBOS workflow status + child workflow statuses
 
@@ -714,8 +723,10 @@ async def manage_dag_execution(job_id, decomposition, initial_handles, config):
 | `orchestrator/jobs.py` | Job dataclass and execute_job replaced by DBOS workflow |
 | `concurrency/queue.py` | DBOS workflow concurrency replaces SQLite queue |
 | `concurrency/durable_sleep.py` | `DBOS.sleep_async()` replaces custom durable sleep |
-| `concurrency/rate_limit.py` (pause flag parts) | DBOS step retry replaces global pause coordination |
+| `concurrency/rate_limit.py` (pause flag functions) | Pause coordination replaced by DBOS events |
 | `concurrency/invoke.py` | DBOS step retry replaces custom retry wrapper |
+
+> **Keep in `rate_limit.py`:** `_parse_reset_seconds()` and `handle_rate_limit_error()` -- error parsing is still needed for DBOS step retry to detect rate limit errors and determine backoff.
 
 ## What Gets Kept (No Changes)
 
