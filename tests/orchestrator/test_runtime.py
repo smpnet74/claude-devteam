@@ -85,7 +85,7 @@ class TestRouteIntakeStep:
 
         @DBOS.workflow()
         async def _run() -> RoutingResult:
-            return await route_intake_step(ctx)
+            return await route_intake_step(ctx, project_name="myproj", worktree_path="/tmp")
 
         result = await _run()
         assert result.path == RoutePath.FULL_PROJECT
@@ -147,6 +147,8 @@ class TestDecomposeStep:
                     spec="Build auth system",
                     plan="Step 1: API\nStep 2: UI",
                     routing=routing,
+                    project_name="myproj",
+                    worktree_path="/tmp/repo",
                 )
 
             result = await _run()
@@ -173,6 +175,8 @@ class TestDecomposeStep:
                 spec="Fix typo",
                 plan="Edit readme",
                 routing=routing,
+                project_name="myproj",
+                worktree_path="/tmp/repo",
             )
 
         with pytest.raises(ValueError, match="FULL_PROJECT"):
@@ -205,6 +209,8 @@ class TestPostPRReviewStep:
                 return await post_pr_review_step(
                     work_type=WorkType.CODE,
                     pr_context="PR diff content here",
+                    project_name="test",
+                    worktree_path="/tmp",
                 )
 
             result = await _run()
@@ -263,6 +269,8 @@ class TestPostPRReviewStep:
                 return await post_pr_review_step(
                     work_type=WorkType.CODE,
                     pr_context="PR diff",
+                    project_name="test",
+                    worktree_path="/tmp",
                     files_changed=["README.md", "docs/guide.txt"],
                 )
 
@@ -562,3 +570,74 @@ class TestCleanupStep:
                 worktree_path=None,
                 comment="Cancelled by operator",
             )
+
+    @pytest.mark.asyncio
+    async def test_cleanup_unknown_mode_raises(self, dbos_launch: Any, tmp_path: Path) -> None:
+        """cleanup_step raises ValueError for unknown mode."""
+        from devteam.orchestrator.runtime import cleanup_step
+
+        @DBOS.workflow()
+        async def _run() -> Any:
+            return await cleanup_step(
+                repo_root=tmp_path,
+                branch="feat/login",
+                mode="invalid",
+            )
+
+        with pytest.raises(ValueError, match="Unknown cleanup mode"):
+            await _run()
+
+
+# ---------------------------------------------------------------------------
+# TestMalformedPayloads
+# ---------------------------------------------------------------------------
+
+
+class TestMalformedPayloads:
+    """Tests that model_validate boundaries reject bad agent payloads."""
+
+    @pytest.mark.asyncio
+    async def test_route_intake_rejects_malformed_agent_response(self, dbos_launch: Any) -> None:
+        """route_intake_step raises when CEO returns invalid payload."""
+        from devteam.orchestrator.runtime import route_intake_step
+
+        ctx = IntakeContext(prompt="Research something")
+
+        with patch(
+            "devteam.orchestrator.runtime.invoke_agent_step",
+            new_callable=AsyncMock,
+            return_value={"invalid_field": "bad"},
+        ):
+
+            @DBOS.workflow()
+            async def _run() -> RoutingResult:
+                return await route_intake_step(ctx, project_name="test", worktree_path="/tmp")
+
+            with pytest.raises(Exception):
+                await _run()
+
+    @pytest.mark.asyncio
+    async def test_decompose_rejects_malformed_agent_response(self, dbos_launch: Any) -> None:
+        """decompose_step raises when CA returns invalid payload."""
+        from devteam.orchestrator.runtime import decompose_step
+
+        routing = _make_routing_result()
+
+        with patch(
+            "devteam.orchestrator.runtime.invoke_agent_step",
+            new_callable=AsyncMock,
+            return_value={"not": "a valid decomposition"},
+        ):
+
+            @DBOS.workflow()
+            async def _run() -> DecompositionResult:
+                return await decompose_step(
+                    spec="Build it",
+                    plan="Steps",
+                    routing=routing,
+                    project_name="test",
+                    worktree_path="/tmp",
+                )
+
+            with pytest.raises(Exception):
+                await _run()

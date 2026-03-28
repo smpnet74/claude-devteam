@@ -67,7 +67,7 @@ def set_invoker(invoker: AgentInvoker | None) -> None:
     _invoker = invoker
 
 
-def set_knowledge_store(store: Any) -> None:
+def set_knowledge_store(store: KnowledgeStore | None) -> None:
     """Set the global KnowledgeStore (called by bootstrap)."""
     global _knowledge_store
     _knowledge_store = store
@@ -148,8 +148,8 @@ async def invoke_agent_step(
 
 async def route_intake_step(
     ctx: IntakeContext,
-    project_name: str = "",
-    worktree_path: str = "",
+    project_name: str,
+    worktree_path: str,
 ) -> RoutingResult:
     """Route incoming work through fast-path classification or CEO agent.
 
@@ -164,12 +164,16 @@ async def route_intake_step(
     Returns:
         RoutingResult with routing path and reasoning.
     """
-    # Try fast-path first
+    # Try fast-path first — classify_intake returns None when CEO analysis is needed
     fast_path = classify_intake(ctx)
-    if fast_path == RoutePath.FULL_PROJECT:
+    if fast_path is not None:
         return RoutingResult(
-            path=RoutePath.FULL_PROJECT,
-            reasoning="Spec and plan provided -- direct to full project workflow",
+            path=fast_path,
+            reasoning=(
+                "Spec and plan provided -- direct to full project workflow"
+                if fast_path == RoutePath.FULL_PROJECT
+                else "Deterministic route from intake classification"
+            ),
         )
 
     # CEO analysis needed
@@ -192,8 +196,8 @@ async def decompose_step(
     spec: str,
     plan: str,
     routing: RoutingResult,
-    project_name: str = "",
-    worktree_path: str = "",
+    project_name: str,
+    worktree_path: str,
 ) -> DecompositionResult:
     """Invoke CA to decompose spec+plan into a task DAG.
 
@@ -251,8 +255,8 @@ async def decompose_step(
 async def post_pr_review_step(
     work_type: WorkType,
     pr_context: str,
-    project_name: str = "",
-    worktree_path: str = "",
+    project_name: str,
+    worktree_path: str,
     files_changed: list[str] | None = None,
     skip_qa_for_no_behavior_change: bool = True,
     assigned_to: str | None = None,
