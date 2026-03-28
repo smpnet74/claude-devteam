@@ -17,6 +17,8 @@ def dbos_launch(dbos_db_path: str):
     from dbos import DBOS
 
     DBOS(config={"name": "devteam_test", "system_database_url": dbos_db_path})
-    DBOS.launch()
-    yield DBOS
-    DBOS.destroy()
+    try:
+        DBOS.launch()
+        yield DBOS
+    finally:
+        DBOS.destroy()

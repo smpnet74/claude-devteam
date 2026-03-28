@@ -98,7 +98,14 @@ class TestTaskRegistry:
 
 
 class TestQuestionRegistry:
+    def _setup_job_and_tasks(self, store):
+        """Create parent job and tasks so FK constraints are satisfied."""
+        store.register_job(workflow_id="parent", project_name="p", repo_root="/r")
+        store.register_task(alias="T-1", workflow_id="c1", job_alias="W-1", assigned_to="be")
+        store.register_task(alias="T-2", workflow_id="c2", job_alias="W-1", assigned_to="fe")
+
     def test_register_and_lookup(self, store):
+        self._setup_job_and_tasks(store)
         display = store.register_question(
             internal_id="Q-T2-1",
             child_workflow_id="child-uuid",
@@ -113,6 +120,7 @@ class TestQuestionRegistry:
         assert q.child_workflow_id == "child-uuid"
 
     def test_resolve(self, store):
+        self._setup_job_and_tasks(store)
         store.register_question(
             internal_id="Q-T2-1",
             child_workflow_id="c",
@@ -127,6 +135,7 @@ class TestQuestionRegistry:
         assert q2.resolved is True
 
     def test_get_pending(self, store):
+        self._setup_job_and_tasks(store)
         store.register_question(
             internal_id="a", child_workflow_id="c1", task_alias="T-1", text="Q1", tier=2
         )
@@ -137,6 +146,26 @@ class TestQuestionRegistry:
         pending = store.get_pending_questions()
         assert len(pending) == 1
         assert pending[0].display_alias == "Q-2"
+
+    def test_get_pending_scoped_to_job(self, store):
+        self._setup_job_and_tasks(store)
+        store.register_question(
+            internal_id="a", child_workflow_id="c1", task_alias="T-1", text="Q1", tier=2
+        )
+        pending = store.get_pending_questions("W-1")
+        assert len(pending) == 1
+        assert pending[0].task_alias == "T-1"
+
+    def test_register_question_rejects_invalid_task(self, store):
+        store.register_job(workflow_id="parent", project_name="p", repo_root="/r")
+        with pytest.raises(Exception):
+            store.register_question(
+                internal_id="x",
+                child_workflow_id="c",
+                task_alias="T-NONEXISTENT",
+                text="bad ref",
+                tier=2,
+            )
 
 
 class TestArtifactRegistry:

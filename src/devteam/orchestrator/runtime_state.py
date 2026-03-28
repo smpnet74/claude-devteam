@@ -81,7 +81,7 @@ class RuntimeStateStore:
                 display_alias TEXT PRIMARY KEY,
                 internal_id TEXT NOT NULL,
                 child_workflow_id TEXT NOT NULL,
-                task_alias TEXT NOT NULL,
+                task_alias TEXT NOT NULL REFERENCES task_registry(alias),
                 text TEXT NOT NULL,
                 tier INTEGER NOT NULL DEFAULT 2,
                 resolved INTEGER NOT NULL DEFAULT 0
@@ -109,14 +109,23 @@ class RuntimeStateStore:
         return f"W-{num + 1}"
 
     def register_job(self, workflow_id: str, project_name: str, repo_root: str) -> JobRecord:
-        alias = self._next_job_alias()
         now = time.time()
-        self._conn.execute(
-            "INSERT INTO job_registry (alias, workflow_id, project_name, repo_root, status, created_at) "
-            "VALUES (?, ?, ?, ?, 'active', ?)",
-            (alias, workflow_id, project_name, repo_root, now),
-        )
-        self._conn.commit()
+        for _ in range(3):
+            alias = self._next_job_alias()
+            try:
+                self._conn.execute("BEGIN IMMEDIATE")
+                self._conn.execute(
+                    "INSERT INTO job_registry (alias, workflow_id, project_name, repo_root, status, created_at) "
+                    "VALUES (?, ?, ?, ?, 'active', ?)",
+                    (alias, workflow_id, project_name, repo_root, now),
+                )
+                self._conn.execute("COMMIT")
+                break
+            except sqlite3.IntegrityError:
+                self._conn.execute("ROLLBACK")
+                continue
+        else:
+            raise RuntimeError("Failed to generate unique job alias after retries")
         return JobRecord(
             alias=alias,
             workflow_id=workflow_id,
