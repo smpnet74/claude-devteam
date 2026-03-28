@@ -58,7 +58,7 @@ devteam start --spec spec.md --plan plan.md
 
 The CLI:
 1. Loads and merges config (`~/.devteam/config.toml` + project `devteam.toml`)
-2. Initializes DBOS via `DBOS(config={"name": "devteam", "database": {"app_db_name": "devteam_system"}})` then calls `DBOS.launch()` — creates/opens the DBOS SQLite database
+2. Initializes DBOS via `DBOS(config={"name": "devteam", "system_database_url": "sqlite:///devteam_system.sqlite"})` then calls `DBOS.launch()` — creates/opens the DBOS SQLite database
 3. Connects to SurrealDB and Ollama (graceful degradation if unavailable)
 4. Starts the `execute_job` workflow via `DBOS.start_workflow_async()`
 5. Enters the interactive terminal session
@@ -182,23 +182,9 @@ When the UI detects a Tier 1 question (from polling child events):
 
 **Task ID (`T-1`)** maps to a child workflow. Each task's DBOS workflow_id is stored as a DBOS event on the parent workflow: `set_event("task:T-1:workflow_id", child_uuid)`.
 
-**Question ID (`Q-1`)** is a DBOS event key on the child workflow. Children raise questions by setting events on themselves: `await DBOS.set_event("question:Q-1", question_data)`. The UI discovers questions by polling all child workflow events. Answers are sent from the UI directly to the child workflow via `await DBOS.send_async(destination_id=child_workflow_id, message=answer_text, topic="answer:Q-1")`. Q-IDs are job-scoped and minted by a counter in the parent workflow (see Question ID Minting below).
+**Question ID (`Q-T2-1`)** is a DBOS event key on the child workflow, scoped to its task. Each child mints its own IDs: `Q-{task_id}-{local_counter}` (e.g., `Q-T2-1`, `Q-T2-2`). This is inherently unique within the job since task IDs are unique and each child owns its own counter. No parent coordination needed.
 
-### Question ID Minting
-
-Q-IDs are job-scoped, not globally unique. The parent workflow maintains a counter and passes the next available ID to each child workflow when launching it:
-
-```python
-# In the parent workflow
-question_counter = 0
-
-def mint_question_id() -> str:
-    nonlocal question_counter
-    question_counter += 1
-    return f"Q-{question_counter}"
-```
-
-Each child mints its own IDs scoped to its task: `Q-{task_id}-{local_counter}` (e.g., `Q-T2-1`). This is inherently unique within the job since task IDs are unique and each child owns its own counter. No parent coordination needed.
+Children raise questions by setting events on themselves: `await DBOS.set_event("question:Q-T2-1", question_data)`. The UI discovers questions by polling all child workflow events. Answers are sent from the UI directly to the child workflow via `await DBOS.send(destination_id=child_workflow_id, message=answer_text, topic="answer:Q-T2-1")`.
 
 ---
 
@@ -543,9 +529,13 @@ V1 removes the daemon from the runtime path. Specific handling:
 ```python
 @DBOS.workflow()
 async def execute_job(job_id: str, spec: str, plan: str, project_name: str, config: dict) -> JobResult:
+    # Check for pause/cancel between every major step
+    await check_control_messages()
+
     # Step 1: Route intake
     routing = await route_intake_step(spec, plan)
     await emit_log(f"Routed as {routing.path.value}")
+    await check_control_messages()
 
     # Step 2: Handle path-specific control flow
     if routing.path == RoutePath.RESEARCH:
@@ -649,8 +639,11 @@ async def execute_task(job_id: str, parent_workflow_id: str, task: TaskDecomposi
 
         # Peer review — look up reviewer from decomposition peer_assignments
         peer_reviewer = decomposition.peer_assignments.get(task.id)
-        review = await invoke_agent_step(
-            role=peer_reviewer,
+        if not peer_reviewer:
+            await emit_log(f"No peer reviewer assigned for {task.id}, skipping peer review")
+        else:
+            review = await invoke_agent_step(
+                role=peer_reviewer,
             prompt=build_review_prompt(impl, task),
             worktree_path=worktree,
             project_name=project_name,
@@ -718,11 +711,16 @@ async def invoke_agent_step(role: str, prompt: str, worktree_path: str, project_
             last_error = e
             backoff_seconds = parse_retry_after(e) or (60 * (2 ** attempt))
             await DBOS.sleep_async(backoff_seconds)
+        except AgentInvocationError:
+            raise  # Auth errors, context exceeded, model unavailable — propagate immediately
     else:
-        raise last_error
+        raise last_error  # Max retries exceeded on rate limit
 
-    # 6. Extract knowledge from response
-    await extract_knowledge_from_response(result, project_name, role)
+    # 6. Extract knowledge from response (best-effort, don't fail the step)
+    try:
+        await extract_knowledge_from_response(result, project_name, role)
+    except Exception:
+        pass  # Knowledge extraction failure should not block task completion
 
     # 7. Return typed result
     return parse_agent_result(role, result)
@@ -778,7 +776,7 @@ async def bootstrap(spec: str, plan: str) -> WorkflowHandle:
     # Configured explicitly to avoid ambiguity between ./dbos.sqlite and ~/.devteam/
     DBOS(config={
         "name": "devteam",
-        "database": {"app_db_name": "devteam_system"},
+        "system_database_url": "sqlite:///devteam_system.sqlite",
     })
     DBOS.launch()
 
