@@ -4,6 +4,8 @@ from pathlib import Path
 
 import pytest
 
+from tests.conftest_dbos import dbos_db_path, dbos_launch  # noqa: F401
+
 
 @pytest.fixture
 def tmp_devteam_home(tmp_path: Path) -> Path:
@@ -26,6 +28,3 @@ def tmp_project_dir(tmp_path: Path) -> Path:
     project = tmp_path / "myproject"
     project.mkdir()
     return project
-
-
-from tests.conftest_dbos import dbos_db_path, dbos_launch  # noqa: F401

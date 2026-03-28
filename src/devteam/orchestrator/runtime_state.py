@@ -9,7 +9,6 @@ from __future__ import annotations
 import sqlite3
 import time
 from dataclasses import dataclass
-from pathlib import Path
 
 
 @dataclass(frozen=True)
@@ -58,6 +57,7 @@ class RuntimeStateStore:
     def __init__(self, db_path: str) -> None:
         self._conn = sqlite3.connect(db_path)
         self._conn.execute("PRAGMA journal_mode=WAL")
+        self._conn.execute("PRAGMA foreign_keys = ON")
         self._init_tables()
 
     def _init_tables(self) -> None:
@@ -246,8 +246,10 @@ class RuntimeStateStore:
 
     def register_artifact(self, task_alias: str, worktree_path: str, branch_name: str) -> None:
         self._conn.execute(
-            "INSERT OR REPLACE INTO artifact_registry (task_alias, worktree_path, branch_name) "
-            "VALUES (?, ?, ?)",
+            "INSERT INTO artifact_registry (task_alias, worktree_path, branch_name) "
+            "VALUES (?, ?, ?) "
+            "ON CONFLICT(task_alias) DO UPDATE SET worktree_path = excluded.worktree_path, "
+            "branch_name = excluded.branch_name",
             (task_alias, worktree_path, branch_name),
         )
         self._conn.commit()
