@@ -124,6 +124,37 @@ devteam resume W-1
 - Reconnects to SurrealDB/Ollama
 - Re-enters the interactive terminal
 - Worktrees and branches are still on disk — work is not lost
+- On resume, bootstrap scans for orphaned worktrees (not attached to any active DBOS workflow) and offers to clean them
+
+### Multi-Job Considerations
+
+V1 is single-job — one interactive session at a time. Multi-job is deferred but the design accounts for it:
+
+```bash
+devteam start --spec foo.md    # Error if job already running:
+                                # "Job W-1 is active. Use /cancel or devteam resume W-1"
+devteam list                    # Show active/paused workflows from DBOS
+devteam attach W-1              # Re-enter interactive session for a running job
+devteam resume W-1              # Resume a paused/crashed workflow
+```
+
+The V1 enforcement: `bootstrap()` checks `DBOS.list_workflows(status="PENDING,RUNNING")` before starting a new one. If any exist, it refuses and tells the operator what to do.
+
+### Event Polling Strategy
+
+The interactive terminal polls DBOS for workflow events:
+- **Polling interval:** 200ms (balances responsiveness with CPU usage)
+- **Backpressure:** If DBOS emits events faster than the terminal renders, events are batched — the UI renders the latest batch on each tick rather than queuing unboundedly
+- **Throttle:** `/verbose` mode streams agent output at terminal render speed, dropping intermediate chunks if the agent produces faster than the terminal can display
+
+### Tier 1 Blocking Behavior
+
+When a Tier 1 question arrives:
+- All event rendering pauses (events are buffered, not lost)
+- Commands in flight complete normally (a `/comment` already sent is delivered)
+- `/pause` becomes a no-op during Tier 1 (already effectively paused)
+- `/cancel` still works (operator can abort during a blocking question)
+- After the operator answers, buffered events render and normal flow resumes
 
 ---
 
@@ -254,6 +285,35 @@ async def invoke_agent_step(role: str, prompt: str, worktree_path: str, project:
 
     # 6. Return typed result
     return parse_agent_result(role, result)
+```
+
+**`claude_sdk_query` definition:**
+
+```python
+async def claude_sdk_query(prompt: str, options: ClaudeAgentOptions) -> AgentResponse:
+    """Call the Claude Agent SDK's query API.
+
+    This is a thin wrapper around the real SDK. It:
+    1. Imports claude_agent_sdk lazily (allows tests without SDK installed)
+    2. Calls query(prompt=prompt, options=options)
+    3. Iterates the response stream to find the ResultMessage
+    4. Checks is_error and structured_output
+    5. Returns the parsed AgentResponse
+
+    The @DBOS.step() decorator on invoke_agent_step handles retry —
+    this function just makes the call and raises on failure.
+    """
+    from claude_agent_sdk import query
+
+    async for message in query(prompt=prompt, options=options):
+        if hasattr(message, 'result'):
+            if message.is_error:
+                raise AgentInvocationError(message.result)
+            return AgentResponse(
+                result=message.structured_output or message.result,
+                session_id=getattr(message, 'session_id', None),
+            )
+    raise AgentInvocationError("No ResultMessage received from SDK")
 ```
 
 DBOS retry handles rate limit errors: if the step throws, DBOS waits with exponential backoff and retries automatically. No custom retry wrapper needed.
@@ -516,11 +576,13 @@ This is not a flag-day rewrite. The work can be done in phases:
 - Wire cleanup into workflow completion and cancellation
 - Tests: verify git operations execute at correct workflow points
 
-**Phase E: End-to-End**
+**Phase E: End-to-End + Cleanup Recovery**
 - Full integration test with mocked agents
 - Crash recovery test
 - Multi-task parallel execution test
 - Question flow test (Tier 1 and Tier 2)
+- Orphaned worktree detection: on `bootstrap()` and `resume`, scan for worktrees not attached to any active DBOS workflow and offer to clean them
+- Orphaned branch/PR detection: on resume, check for branches/PRs that belong to completed or failed tasks and clean up
 
 ---
 
