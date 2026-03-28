@@ -883,7 +883,7 @@ from devteam.agents.invoker import (
     _run_query,
 )
 from devteam.agents.registry import AgentRegistry
-from devteam.concurrency.rate_limit import parse_retry_after
+from devteam.concurrency.rate_limit import _parse_reset_seconds
 from devteam.orchestrator.events import make_log_key
 from devteam.orchestrator.routing import IntakeContext, classify_intake, build_routing_prompt
 from devteam.orchestrator.schemas import (
@@ -903,6 +903,7 @@ logger = logging.getLogger(__name__)
 _invoker: AgentInvoker | None = None
 _knowledge_store: Any | None = None
 _embedder: Any | None = None
+_config: dict[str, Any] | None = None
 
 
 def set_invoker(invoker: AgentInvoker) -> None:
@@ -918,6 +919,16 @@ def set_knowledge_store(store: Any | None) -> None:
 def set_embedder(embedder: Any | None) -> None:
     global _embedder
     _embedder = embedder
+
+
+def set_config(config: dict[str, Any]) -> None:
+    global _config
+    _config = config
+
+
+def get_config() -> dict[str, Any]:
+    assert _config is not None, "Config not initialized (call bootstrap first)"
+    return _config
 
 
 # ---------------------------------------------------------------------------
@@ -954,7 +965,10 @@ async def invoke_agent_step(
     params = _invoker.build_query_params(role, prompt, context)
     options: QueryOptions = params["options"]
 
-    # Knowledge injection: append memory index to system prompt
+    # Knowledge injection: append memory index to system prompt.
+    # NOTE: This SurrealDB call happens inside a @DBOS.step(). On crash replay,
+    # DBOS returns the cached step result — the knowledge call does NOT re-execute.
+    # So non-determinism between original and replay is not a concern.
     if _knowledge_store is not None:
         try:
             from devteam.knowledge.index import build_memory_index_safe
@@ -973,6 +987,9 @@ async def invoke_agent_step(
             pass  # Knowledge failure must not block invocation
 
     # Rate-limit retry loop
+    # NOTE: _get_schema_for_role is private on AgentInvoker. During implementation,
+    # rename it to get_schema_class_for_role (public) to avoid fragile coupling.
+    # The public schema_for_role() returns a JSON dict, not the model class we need here.
     result_type = _invoker._get_schema_for_role(role)
     last_error: Exception | None = None
 
@@ -995,7 +1012,7 @@ async def invoke_agent_step(
         except InvocationError as e:
             if _is_rate_limit_error(e):
                 last_error = e
-                backoff = parse_retry_after(e) or (60 * (2 ** attempt))
+                backoff = _parse_reset_seconds(str(e)) or (60 * (2 ** attempt))
                 logger.warning("Rate limit on '%s' (attempt %d), sleeping %ds", role, attempt + 1, backoff)
                 await DBOS.sleep_async(float(backoff))
                 continue
@@ -1088,15 +1105,19 @@ async def post_pr_review_step(
             skipped_gates.append(gate.name)
             continue
 
-        result = await invoke_agent_step(
+        raw_result = await invoke_agent_step(
             role=gate.reviewer_role,
             prompt=f"## {gate.name.replace('_', ' ').title()}\n\n{pr_context}\n\nReview and provide your verdict.\n",
             worktree_path=None,
             project_name=project_name,
         )
-        gate_results[gate.name] = result.model_dump()
+        # invoke_agent_step returns BaseModel — validate as ReviewResult to access
+        # the needs_revision property (which checks verdict in ["needs_revision", "blocked"])
+        from devteam.orchestrator.schemas import ReviewResult
+        review = ReviewResult.model_validate(raw_result.model_dump())
+        gate_results[gate.name] = review.model_dump()
 
-        if getattr(result, "needs_revision", False):
+        if review.needs_revision:
             failed_gates.append(gate.name)
             if gate.required:
                 break
@@ -1139,10 +1160,13 @@ async def create_worktree_step(
 @DBOS.step()
 async def create_pr_step(
     repo_root: str, task: TaskDecomposition, worktree_path: str,
+    config: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Create a PR for a task. Idempotent — returns existing PR if found.
 
+    Checks approval gates before push and PR creation.
     Uses git/pr.py:find_existing_pr(cwd, branch) and create_pr(cwd, title, body, branch).
+    Approval uses concurrency/approval.py:check_approval(gates, action) -> ApprovalDecision.
     """
     from devteam.concurrency.approval import check_approval, load_approval_gates
     from devteam.git.helpers import git_run
@@ -1156,8 +1180,22 @@ async def create_pr_step(
     if existing:
         return {"number": existing.number, "url": existing.url, "state": existing.state}
 
+    # Approval gate: check_approval takes ApprovalGates (not raw dict), action str
+    # load_approval_gates builds ApprovalGates from config
+    if config:
+        gates = load_approval_gates(config.get("approval", {}))
+        push_decision = check_approval(gates, "push")
+        if push_decision.blocked:
+            return {"skipped": True, "reason": "push approval blocked"}
+        # Manual approval would emit a Tier 1 question — deferred to interactive wiring
+
     # Push
     git_run(["push", "-u", "origin", branch_name], cwd=wt)
+
+    if config:
+        pr_decision = check_approval(gates, "open_pr")
+        if pr_decision.blocked:
+            return {"pushed": True, "pr_skipped": True, "reason": "open_pr approval blocked"}
 
     # Create PR
     pr_info = create_pr(
@@ -1170,15 +1208,18 @@ async def create_pr_step(
 
 
 @DBOS.step()
-async def cleanup_step(repo_root: str, job_alias: str, store: Any) -> None:
+async def cleanup_step(repo_root: str, job_alias: str) -> None:
     """Clean up worktrees, branches, and PRs for a completed/cancelled job.
 
     Uses git/cleanup.py:cleanup_on_cancel(repo_root, pr_branches).
-    Reads artifact registry to know what to clean.
+    Reads artifact registry via module singleton (NOT a parameter —
+    RuntimeStateStore is not DBOS-serializable).
     """
     from devteam.git.cleanup import cleanup_on_cancel
+    from devteam.orchestrator.bootstrap import get_runtime_store
 
     root = Path(repo_root)
+    store = get_runtime_store()
     artifacts = store.get_artifacts_for_job(job_alias)
 
     pr_branches = []
@@ -1216,26 +1257,30 @@ Build the child workflow that handles engineer → peer review → EM review →
 
 Create `tests/orchestrator/test_workflows.py` with tests for execute_task covering: happy path (approved), question flow, revision loop, max revisions exceeded. Use `@pytest.mark.asyncio` and mock `invoke_agent_step`.
 
-Key assertions:
-- Mock `invoke_agent_step` returns correct contract types (`ImplementationResult` with `status="completed"`, `ReviewResult` with `verdict="approved"`)
-- Result status matches expectations
+Key assertions and **correct contract values** (from `agents/contracts.py`):
+- `ImplementationResult`: `status` must be `Literal["completed", "needs_clarification", "blocked"]`. When `status="needs_clarification"` or `"blocked"`, the `question` field is **required** (not None).
+- `ReviewResult`: `verdict` must be `Literal["approved", "approved_with_comments", "needs_revision", "blocked"]` — NOT `"approve"`. The `needs_revision` property returns `True` when `verdict in ("needs_revision", "blocked")`.
+- `TaskDecomposition`: uses `depends_on` (not `dependencies`), requires `team: Literal["a","b"]` and `pr_group: str` (min_length=1).
+- `RoutingResult`: has `path`, `reasoning`, `target_team` — NO `recommended_role` field.
 - Runtime state store gets updated (task status, artifacts)
 
 - [ ] **Step 2: Implement execute_task in workflows.py**
 
 Create `src/devteam/orchestrator/workflows.py`:
 
+The `execute_task` signature must include `repo_root: str` (passed by the parent workflow, which gets it from bootstrap/runtime_state). This is needed for `create_worktree_step(repo_root, task)` and `create_pr_step(repo_root, task, worktree_path)`.
+
 The workflow:
 1. Gets its own log counter (local, not global)
-2. Calls `create_worktree_step` from runtime.py
-3. Registers artifact in runtime_state
+2. Calls `create_worktree_step(repo_root, task)` from runtime.py
+3. Registers artifact in runtime_state via `get_runtime_store()`
 4. Runs revision loop calling `invoke_agent_step`
-5. On question: sets DBOS event, waits for `DBOS.recv_async(topic="answer:Q-T{id}-{n}")`
+5. On question: sets DBOS event via `DBOS.set_event()`, waits for answer via `DBOS.recv(topic="answer:Q-T{id}-{n}")` (inside workflow context, use sync API names — DBOS handles async internally)
 6. Registers question in runtime_state
 7. On peer/EM review pass: calls `create_pr_step`
 8. Updates runtime_state task status throughout
 
-Pause/cancel checks use `DBOS.recv_async(topic="control:pause", timeout_seconds=0)` pattern from spec.
+Pause/cancel checks use `DBOS.recv(topic="control:pause", timeout_seconds=0)` inside workflow context. **DBOS API convention:** Inside `@DBOS.workflow()` functions, use sync names (`recv`, `set_event`, `send`). From outside workflows (CLI/UI), use `_async` variants (`send_async`, `get_all_events_async`).
 
 - [ ] **Step 3: Run tests, commit**
 
@@ -1258,13 +1303,31 @@ Build the parent workflow with DAG-aware parallel execution. Uses existing `DAGS
 
 Test cases: full_project path (route→decompose→DAG→complete), research path (single agent call), small_fix path (single task). Mock `route_intake_step`, `decompose_step`, and `execute_task`.
 
+**Contract notes for small_fix inline TaskDecomposition:**
+- `RoutingResult` has `target_team` (Literal["a","b"] | None), NOT `recommended_role`
+- Use `depends_on=[]` not `dependencies=[]`
+- `team` and `pr_group` are required fields
+- Derive engineer role from team: team "a" → "backend_engineer", team "b" → "data_engineer"
+
+```python
+# Correct small_fix construction:
+task = TaskDecomposition(
+    id="T-1",
+    assigned_to="backend_engineer",  # derive from target_team, not recommended_role
+    description=spec,
+    depends_on=[],          # NOT dependencies
+    team=routing.target_team or "a",  # required Literal["a","b"]
+    pr_group="fix/small-fix",         # required, min_length=1
+)
+```
+
 - [ ] **Step 2: Implement execute_job**
 
 The workflow:
 1. Registers job in runtime_state
 2. Calls `route_intake_step`
 3. For research: single `invoke_agent_step`, return
-4. For small_fix: create single-task decomposition, launch one child
+4. For small_fix: create single-task decomposition (derive role from `routing.target_team`, NOT `recommended_role` which doesn't exist; use `depends_on` not `dependencies`; include required `team` and `pr_group` fields), launch one child
 5. For full_project: `decompose_step`, then `manage_dag_execution`
 6. `manage_dag_execution` uses `DAGState.get_ready_tasks()`, respects `max_concurrent_agents`, launches children via `DBOS.start_workflow_async(execute_task, ...)`
 7. Registers each child's task alias + workflow_id in runtime_state
@@ -1310,7 +1373,7 @@ from devteam.agents.invoker import AgentInvoker
 from devteam.agents.registry import AgentRegistry
 from devteam.agents.template_manager import get_bundled_templates_dir
 from devteam.config.settings import DevteamConfig, load_global_config, load_project_config, merge_configs
-from devteam.orchestrator.runtime import set_embedder, set_invoker, set_knowledge_store
+from devteam.orchestrator.runtime import set_config, set_embedder, set_invoker, set_knowledge_store
 from devteam.orchestrator.runtime_state import RuntimeStateStore
 
 logger = logging.getLogger(__name__)
@@ -1397,6 +1460,7 @@ async def bootstrap(
     set_invoker(invoker)
     set_knowledge_store(knowledge_store)
     set_embedder(embedder)
+    set_config(config.model_dump())
 
     # Start workflow
     from devteam.orchestrator.workflows import execute_job
@@ -1588,7 +1652,7 @@ Remove `from devteam.concurrency.queue import PENDING`. Replace with a local con
 
 - [ ] **Step 4: Trim rate_limit.py**
 
-Remove `PauseStatus`, `PauseCheckResult`, `init_pause_table`, `set_global_pause`, `get_global_pause`, `clear_global_pause`, `is_paused`, `check_pause_before_invoke`, `handle_rate_limit_error`. Keep `DEFAULT_BACKOFF_SECONDS`, `_parse_reset_seconds`, `parse_retry_after`.
+Remove `PauseStatus`, `PauseCheckResult`, `init_pause_table`, `set_global_pause`, `get_global_pause`, `clear_global_pause`, `is_paused`, `check_pause_before_invoke`, `handle_rate_limit_error`. Keep `DEFAULT_BACKOFF_SECONDS` and `_parse_reset_seconds` (the only error-parsing function — there is no `parse_retry_after`).
 
 - [ ] **Step 5: Update main.py**
 
@@ -1623,7 +1687,15 @@ Expected: All tests pass. No import errors.
 - [ ] **Step 10: Commit**
 
 ```bash
-git add -A
+# Stage specific deleted and modified files (not git add -A)
+git rm src/devteam/daemon/server.py src/devteam/daemon/process.py src/devteam/daemon/database.py
+git rm src/devteam/orchestrator/cli_bridge.py src/devteam/orchestrator/jobs.py
+git rm src/devteam/concurrency/queue.py src/devteam/concurrency/durable_sleep.py src/devteam/concurrency/invoke.py
+git rm tests/test_daemon.py tests/test_database.py tests/orchestrator/test_cli_bridge.py tests/orchestrator/test_jobs.py
+git rm tests/concurrency/test_queue.py tests/concurrency/test_durable_sleep.py tests/concurrency/test_rate_limit_invoke.py
+git add src/devteam/concurrency/__init__.py src/devteam/concurrency/status_display.py
+git add src/devteam/concurrency/cli_priority.py src/devteam/concurrency/rate_limit.py
+git add src/devteam/cli/main.py
 git commit -m "refactor: remove daemon, JobStore, queue, durable_sleep, and invoke stopgaps"
 ```
 
@@ -1653,7 +1725,9 @@ ls src/devteam/concurrency/queue.py 2>&1 | grep "No such file"
 
 - [ ] **Step 4: Final commit**
 
+Stage and commit any remaining fixes from lint/typecheck:
+
 ```bash
-git add -A
+git add <specific files that were fixed>
 git commit -m "chore: final validation — all tests passing, lint clean"
 ```
