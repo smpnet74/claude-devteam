@@ -94,6 +94,8 @@ class RuntimeStateStore:
                 pr_url TEXT,
                 pr_state TEXT
             );
+            CREATE INDEX IF NOT EXISTS idx_task_job ON task_registry(job_alias);
+            CREATE INDEX IF NOT EXISTS idx_question_task ON question_registry(task_alias);
         """)
         self._conn.commit()
 

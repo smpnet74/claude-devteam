@@ -97,6 +97,13 @@ class TestTaskRegistry:
         tasks = store.get_tasks_for_job("W-1")
         assert len(tasks) == 2
 
+    def test_update_task_status(self, store):
+        store.register_job(workflow_id="p", project_name="p", repo_root="/r")
+        store.register_task(alias="T-1", workflow_id="c", job_alias="W-1", assigned_to="be")
+        store.update_task_status("T-1", "running")
+        task = store.get_task("T-1")
+        assert task.status == "running"
+
 
 class TestQuestionRegistry:
     def test_register_and_lookup(self, store):
