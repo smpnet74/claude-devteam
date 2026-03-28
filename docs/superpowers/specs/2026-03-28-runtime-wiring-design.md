@@ -58,7 +58,7 @@ devteam start --spec spec.md --plan plan.md
 
 The CLI:
 1. Loads and merges config (`~/.devteam/config.toml` + project `devteam.toml`)
-2. Initializes DBOS via `DBOS(config={"name": "devteam", "system_database_url": "sqlite:///devteam_system.sqlite"})` then calls `DBOS.launch()` — creates/opens the DBOS SQLite database
+2. Initializes DBOS via `DBOS(config={"name": "devteam", "system_database_url": "sqlite:///~/.devteam/devteam_system.sqlite"})` then calls `DBOS.launch()` — creates/opens the DBOS SQLite database
 3. Connects to SurrealDB and Ollama (graceful degradation if unavailable)
 4. Starts the `execute_job` workflow via `DBOS.start_workflow_async()`
 5. Enters the interactive terminal session
@@ -201,15 +201,15 @@ Children raise questions by setting events on themselves: `await DBOS.set_event(
 
 **Child workflows (`execute_task`):**
 - Own individual task execution (engineer → peer review → EM review → PR)
-- Raise questions by setting events ON THEMSELVES: `await DBOS.set_event("question:Q-1", question_data)` — visible to the UI via `get_all_events_async(child_workflow_id)`
-- Wait for answers via `await DBOS.recv(topic="answer:Q-1")` — the UI sends answers directly to the child
+- Raise questions by setting events ON THEMSELVES: `await DBOS.set_event("question:Q-T2-1", question_data)` — visible to the UI via `get_all_events_async(child_workflow_id)`
+- Wait for answers via `await DBOS.recv(topic="answer:Q-T2-1")` — the UI sends answers directly to the child
 - Emit log events on themselves (the UI polls both parent and child events)
 - Do NOT send questions to the parent — the UI discovers questions by polling child events directly
 
 **Terminal UI:**
 - Polls events from the parent workflow AND all active child workflows via `get_all_events_async()`
 - Discovers questions by finding `question:*` keys in child workflow events
-- Routes `/answer Q-1 text` by looking up which child workflow owns Q-1, then `await DBOS.send_async(destination_id=child_workflow_id, message=text, topic="answer:Q-1")`
+- Routes `/answer Q-1 text` by looking up which child workflow owns Q-1, then `await DBOS.send(destination_id=child_workflow_id, message=text, topic="answer:Q-T2-1")`
 - Routes `/comment T-1 text` by looking up T-1's child workflow_id, then `await DBOS.send_async(destination_id=child_workflow_id, message=text, topic="comment")`
 - Routes `/pause` and `/resume` to the parent workflow AND all active children via `DBOS.send_async(topic="control:pause"/"control:resume")`
 - Routes `/cancel` to the parent workflow
@@ -218,11 +218,11 @@ Children raise questions by setting events on themselves: `await DBOS.set_event(
 
 ```
 Child workflow (T-2) raises a question:
-  1. await DBOS.set_event("question:Q-1", {tier: 2, text: "Redis or JWT?", task: "T-2"})
-  2. answer = await DBOS.recv(topic="answer:Q-1")  # blocks until answer arrives
+  1. await DBOS.set_event("question:Q-T2-1", {tier: 2, text: "Redis or JWT?", task: "T-2"})
+  2. answer = await DBOS.recv(topic="answer:Q-T2-1")  # blocks until answer arrives
 
 Terminal UI (polling):
-  3. Polls get_all_events_async("abc-123") → sees "question:Q-1" key appear
+  3. Polls get_all_events_async("abc-123") → sees "question:Q-T2-1" key appear
   4. Renders: "[W-1/T-2] QUESTION [Q-1] Redis or JWT?"
 
 Operator types: /answer Q-1 Use JWT
@@ -232,7 +232,7 @@ Terminal UI:
   6. await DBOS.send_async(destination_id="abc-123", message="Use JWT", topic="answer:Q-1")
 
 Child workflow (T-2):
-  7. DBOS.recv(topic="answer:Q-1") unblocks with "Use JWT"
+  7. DBOS.recv(topic="answer:Q-T2-1") unblocks with "Use JWT"
   8. Incorporates answer into next engineer prompt
   9. await DBOS.set_event("log:000047", "T-2 question Q-1 answered, resuming")
 
@@ -776,7 +776,7 @@ async def bootstrap(spec: str, plan: str) -> WorkflowHandle:
     # Configured explicitly to avoid ambiguity between ./dbos.sqlite and ~/.devteam/
     DBOS(config={
         "name": "devteam",
-        "system_database_url": "sqlite:///devteam_system.sqlite",
+        "system_database_url": "sqlite:///~/.devteam/devteam_system.sqlite",
     })
     DBOS.launch()
 
@@ -853,7 +853,7 @@ async def run_interactive_session(handle: WorkflowHandle):
 - `/verbose` mode switches a task's formatter to stream the full agent response
 
 **Command dispatch:**
-- `/answer Q-1 text` → `await DBOS.send_async(destination_id=child_workflow_id, message=text, topic="answer:Q-1")`
+- `/answer Q-1 text` → `await DBOS.send(destination_id=child_workflow_id, message=text, topic="answer:Q-T2-1")`
 - `/pause` → `await DBOS.send_async(destination_id=parent_workflow_id, message=True, topic="control:pause")` — also fans out to all active child workflows
 - `/resume` → `await DBOS.send_async(destination_id=parent_workflow_id, message=True, topic="control:resume")` — also fans out to all active child workflows
 - `/cancel` → cancel workflow + trigger cleanup workflow
