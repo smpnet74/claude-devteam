@@ -58,7 +58,7 @@ devteam start --spec spec.md --plan plan.md
 
 The CLI:
 1. Loads and merges config (`~/.devteam/config.toml` + project `devteam.toml`)
-2. Calls `DBOS.launch()` (initializes SQLite at `~/.devteam/devteam.sqlite`)
+2. Initializes DBOS via `DBOS(config={"name": "devteam", "system_database_url": "sqlite:///~/.devteam/devteam_system.sqlite"})` then calls `DBOS.launch()` — creates/opens the DBOS SQLite database
 3. Connects to SurrealDB and Ollama (graceful degradation if unavailable)
 4. Starts the `execute_job` workflow via `DBOS.start_workflow_async()`
 5. Enters the interactive terminal session
@@ -115,16 +115,32 @@ The CLI:
 
 ### Crash Recovery
 
-If the process dies (Ctrl+C, crash, terminal close):
+Two distinct cases:
+
+**Case 1: Process crash (Ctrl+C, crash, terminal close)**
+
+The workflow was actively running when the process died. DBOS automatically recovers pending workflows on `DBOS.launch()` — no explicit `resume_workflow` call is needed.
+
 ```bash
 devteam resume W-1
 ```
-- Calls `DBOS.launch()` → `DBOS.resume_workflow(workflow_id)`
-- DBOS replays from the last completed step (not from the beginning)
+- Calls `DBOS.launch()` — DBOS discovers the interrupted workflow and automatically resumes it from the last completed step (not from the beginning)
 - Reconnects to SurrealDB/Ollama
-- Re-enters the interactive terminal
+- Re-enters the interactive terminal session for the recovered workflow
 - Worktrees and branches are still on disk — work is not lost
 - On resume, bootstrap scans for orphaned worktrees (not attached to any active DBOS workflow) and offers to clean them
+
+**Case 2: Explicit resume after `/pause` (CLI was closed while paused)**
+
+The workflow is still running (sleeping in the pause check loop). If the CLI was closed, the workflow was interrupted mid-sleep.
+
+```bash
+devteam resume W-1
+```
+- Calls `DBOS.launch()` — DBOS recovers the workflow (it was sleeping in the pause check loop, which is a durable `DBOS.sleep_async`)
+- The workflow resumes in its paused state, waiting for a `control:resume` message
+- The CLI reattaches the interactive session and shows "PAUSED" state
+- Operator can then `/resume` to continue work
 
 ### Multi-Job Considerations
 
@@ -149,12 +165,14 @@ The interactive terminal polls DBOS for workflow events:
 
 ### Tier 1 Blocking Behavior
 
-When a Tier 1 question arrives:
-- All event rendering pauses (events are buffered, not lost)
-- Commands in flight complete normally (a `/comment` already sent is delivered)
-- `/pause` becomes a no-op during Tier 1 (already effectively paused)
-- `/cancel` still works (operator can abort during a blocking question)
-- After the operator answers, buffered events render and normal flow resumes
+When the UI detects a Tier 1 question (from polling child events):
+1. UI sends `control:pause` to parent and all active children — this is the same mechanism as `/pause`, so all workflows stop at their next step boundary
+2. All event rendering pauses (events are buffered, not lost)
+3. Commands in flight complete normally (a `/comment` already sent is delivered)
+4. `/pause` becomes a no-op during Tier 1 (already effectively paused)
+5. `/cancel` still works (operator can abort during a blocking question)
+6. After the operator answers, UI sends the answer to the child and sends `control:resume` to parent + all children
+7. Buffered events render and normal flow resumes
 
 ---
 
@@ -164,7 +182,9 @@ When a Tier 1 question arrives:
 
 **Task ID (`T-1`)** maps to a child workflow. Each task's DBOS workflow_id is stored as a DBOS event on the parent workflow: `set_event("task:T-1:workflow_id", child_uuid)`.
 
-**Question ID (`Q-1`)** is a DBOS message topic. Questions are sent from child workflows to the parent via `DBOS.send_async(destination_id=parent_workflow_id, message=question_data, topic="question:Q-1")`. Answers are sent from the UI to the specific child workflow via `await DBOS.send_async(destination_id=child_workflow_id, message=answer_text, topic="answer:Q-1")`.
+**Question ID (`Q-T2-1`)** is a DBOS event key on the child workflow, scoped to its task. Each child mints its own IDs: `Q-{task_id}-{local_counter}` (e.g., `Q-T2-1`, `Q-T2-2`). This is inherently unique within the job since task IDs are unique and each child owns its own counter. No parent coordination needed.
+
+Children raise questions by setting events on themselves: `await DBOS.set_event("question:Q-T2-1", question_data)`. The UI discovers questions by polling all child workflow events. Answers are sent from the UI directly to the child workflow via `await DBOS.send(destination_id=child_workflow_id, message=answer_text, topic="answer:Q-T2-1")`.
 
 ---
 
@@ -175,46 +195,80 @@ When a Tier 1 question arrives:
 **Parent workflow (`execute_job`):**
 - Owns the job lifecycle (routing → decomposition → DAG → review → cleanup)
 - Launches child workflows for each task
-- Does NOT relay messages — the UI communicates directly with child workflows
+- Does NOT relay questions — the UI discovers questions by polling child events directly
 - Emits sequenced log events for the terminal UI
-- Receives `/pause` and `/cancel` commands
+- Receives `/pause`, `/resume`, and `/cancel` control messages via `DBOS.recv()`
 
 **Child workflows (`execute_task`):**
 - Own individual task execution (engineer → peer review → EM review → PR)
-- Raise questions via `DBOS.send_async(destination_id=parent_workflow_id, message=question_data, topic="question:Q-1")` — sends to the parent workflow
-- Wait for answers via `DBOS.recv_async("answer:Q-1")`
+- Raise questions by setting events ON THEMSELVES: `await DBOS.set_event("question:Q-T2-1", question_data)` — visible to the UI via `get_all_events_async(child_workflow_id)`
+- Wait for answers via `await DBOS.recv(topic="answer:Q-T2-1")` — the UI sends answers directly to the child
 - Emit log events on themselves (the UI polls both parent and child events)
-- Receive `parent_workflow_id` as a parameter so they can send messages to the parent
+- Do NOT send questions to the parent — the UI discovers questions by polling child events directly
 
 **Terminal UI:**
-- Polls events from the parent workflow AND all active child workflows
-- Routes `/answer Q-1 text` by looking up which child workflow owns Q-1, then `await DBOS.send_async(destination_id=child_workflow_id, message=text, topic="answer:Q-1")`
+- Polls events from the parent workflow AND all active child workflows via `get_all_events_async()`
+- Discovers questions by finding `question:*` keys in child workflow events
+- Routes `/answer Q-1 text` by looking up which child workflow owns Q-1, then `await DBOS.send(destination_id=child_workflow_id, message=text, topic="answer:Q-T2-1")`
 - Routes `/comment T-1 text` by looking up T-1's child workflow_id, then `await DBOS.send_async(destination_id=child_workflow_id, message=text, topic="comment")`
-- Routes `/pause` and `/cancel` to the parent workflow
+- Routes `/pause` and `/resume` to the parent workflow AND all active children via `DBOS.send_async(topic="control:pause"/"control:resume")`
+- Routes `/cancel` to the parent workflow
 
 ### Message Flow Diagram
 
 ```
+Child workflow (T-2) raises a question:
+  1. await DBOS.set_event("question:Q-T2-1", {tier: 2, text: "Redis or JWT?", task: "T-2"})
+  2. answer = await DBOS.recv(topic="answer:Q-T2-1")  # blocks until answer arrives
+
+Terminal UI (polling):
+  3. Polls get_all_events_async("abc-123") → sees "question:Q-T2-1" key appear
+  4. Renders: "[W-1/T-2] QUESTION [Q-1] Redis or JWT?"
+
 Operator types: /answer Q-1 Use JWT
 
 Terminal UI:
-  1. Looks up Q-1 → owned by child workflow for T-2 (UUID: abc-123)
-  2. await DBOS.send_async(destination_id="abc-123", message="Use JWT", topic="answer:Q-1")
+  5. Looks up display alias Q-1 → maps to internal ID Q-T2-1, owned by child workflow for T-2 (UUID: abc-123)
+  6. await DBOS.send_async(destination_id="abc-123", message="Use JWT", topic="answer:Q-T2-1")
 
 Child workflow (T-2):
-  3. answer = await DBOS.recv_async("answer:Q-1")  # unblocks
-  4. Incorporates answer into next engineer prompt
-  5. DBOS.set_event_async("log:00047", "T-2 question Q-1 answered, resuming")
+  7. DBOS.recv(topic="answer:Q-T2-1") unblocks with "Use JWT"
+  8. Incorporates answer into next engineer prompt
+  9. await DBOS.set_event("log:000047", "T-2 question Q-1 answered, resuming")
 
 Terminal UI:
-  6. Polls events, renders: "[W-1/T-2] Question Q-1 answered, resuming"
+  10. Polls events, renders: "[W-1/T-2] Question Q-1 answered, resuming"
 ```
+
+### Events vs Messages Split
+
+DBOS provides two distinct communication primitives. The split is intentional:
+
+| Primitive | API | Purpose | Direction |
+|-----------|-----|---------|-----------|
+| **Events** (`set_event` / `get_all_events`) | Key-value, pollable, visible to any caller | **Visibility** — letting observers see state | Workflow sets on itself |
+| **Messages** (`send` / `recv`) | Topic-based, consumed once, blocks receiver | **Control handoff** — triggering action in another workflow | Sender to receiver |
+
+**Events (for visibility — set by the workflow on itself):**
+- Log entries (`log:000001`, `log:000002`, ...)
+- Question metadata (`question:Q-1`, `question:Q-2`, ...)
+- Task status (`task:T-1:status`, `task:T-2:status`, ...)
+- PR status (`pr:T-1`, `pr:T-2`, ...)
+- Pause state (`pause_state`)
+- Cancel state (`cancel_state`)
+
+**Messages (for control handoff — sent between workflows):**
+- `/answer` → child workflow (`topic="answer:Q-1"`)
+- `/comment` → child workflow (`topic="comment"`)
+- `/pause`, `/resume` → parent + children (`topic="control:pause"`, `topic="control:resume"`)
+- `/cancel` → parent workflow (`topic="control:cancel"`)
+- `/priority` → parent workflow (`topic="control:priority"`)
 
 ---
 
 ## Terminal Event Transport
 
-DBOS events are key-value snapshots, not an append-only log. `get_all_events_async()` returns the latest value per key. To build a scrolling log:
+DBOS events are key-value snapshots, not an append-only log. `get_all_events_async(workflow_id)` returns `Dict[str, Any]` — a dict mapping event keys to their latest values. To build a scrolling log:
 
 **Sequenced event keys:** Each workflow emits events with auto-incrementing keys:
 - `log:000001` → `"Routing... full_project"`
@@ -226,10 +280,15 @@ The UI tracks the last-seen sequence number per workflow and only renders new en
 **Implementation:**
 
 ```python
-# In workflow code:
-async def emit_event(message: str, level: str = "info"):
-    seq = DBOS.step_id  # auto-incrementing within the workflow
-    await DBOS.set_event_async(f"log:{seq:06d}", {
+# In each workflow, maintain an explicit monotonic counter (not DBOS.step_id,
+# which is an internal implementation detail and not guaranteed to be sequential
+# or stable across replays).
+log_seq = 0
+
+async def emit_log(message: str, level: str = "info"):
+    nonlocal log_seq
+    log_seq += 1
+    await DBOS.set_event(f"log:{log_seq:06d}", {
         "message": message, "level": level, "timestamp": time.time()
     })
 
@@ -247,28 +306,70 @@ async def poll_events(workflow_id: str, last_seen: int) -> list[dict]:
 
 **`/pause` is an operator gate, not a DBOS cancel.**
 
-Implementation: the parent workflow checks a pause flag before launching new child workflows or new steps. Active child workflows run to their current step's completion, then check the flag before starting the next step.
+`set_event_async` is only callable from within the workflow that owns the event, not from external code. The UI cannot directly set a pause event on the parent workflow. Instead, the UI sends a control message to the parent workflow, and the parent receives and acts on it internally.
 
+**UI sends control messages:**
 ```python
-# Pause flag stored as a DBOS event on the parent workflow
-await DBOS.set_event_async("paused", True)   # /pause
-await DBOS.set_event_async("paused", False)  # /resume
+# /pause command — UI sends message to parent workflow
+await DBOS.send_async(destination_id=parent_workflow_id, message=True, topic="control:pause")
 
-# Inside workflows, before each major step:
-async def check_pause(workflow_id: str):
-    while True:
-        events = await DBOS.get_all_events_async(workflow_id)
-        if not events.get("paused", False):
-            return
-        await DBOS.sleep_async(1)  # durable sleep — survives crash
+# /resume command — UI sends message to parent workflow
+await DBOS.send_async(destination_id=parent_workflow_id, message=True, topic="control:resume")
 ```
 
+**Parent workflow checks for control messages between steps:**
+```python
+# Inside the parent workflow, between major steps:
+paused = False
+
+async def check_pause():
+    nonlocal paused
+    # Check for pause/resume control messages (non-blocking)
+    while True:
+        msg = await DBOS.recv(topic="control:pause", timeout_seconds=0)
+        if msg is None:
+            break
+        paused = True
+    while True:
+        msg = await DBOS.recv(topic="control:resume", timeout_seconds=0)
+        if msg is None:
+            break
+        paused = False
+    # If paused, block until resume
+    while paused:
+        await DBOS.set_event("pause_state", True)
+        msg = await DBOS.recv(topic="control:resume", timeout_seconds=1)
+        if msg is not None:
+            paused = False
+    await DBOS.set_event("pause_state", False)
+```
+
+Child workflows also call `check_pause()` before each major step — they receive their own `control:pause` / `control:resume` messages from the UI (the UI fans out the pause to all active children).
+
 **Behavior:**
-- `/pause` → sets flag, active steps finish, no new steps start, UI shows "PAUSED"
-- `/resume` → clears flag, workflows continue from where they paused
+- `/pause` → UI sends `control:pause` to parent and all active children. Active steps finish, no new steps start, UI shows "PAUSED"
+- `/resume` → UI sends `control:resume` to parent and all active children. Workflows continue from where they paused
 - `/cancel` → triggers cleanup workflow (close PRs, delete branches, remove worktrees), terminates all child workflows
 - Pause does NOT run cleanup. Cancel does.
 - Child workflows are not individually pausable — pause is global per job.
+
+---
+
+## Cancellation Ordering
+
+When the parent workflow receives a cancel control message, it follows a strict ordering to ensure clean shutdown:
+
+1. **Set cancelling state:** Parent sets `await DBOS.set_event("cancel_state", "cancelling")` so the UI can display status
+2. **Signal children:** Parent sends `control:cancel` to all active child workflows
+3. **Wait for children to reach step boundaries:** Active child steps run to completion of their current step (agent invocation, git operation, etc.). Children check for `control:cancel` at the same points they check for pause — between steps. This avoids interrupting mid-operation.
+4. **Run cleanup in order:** Once all children have stopped:
+   - Close open PRs (set to "closed" state on GitHub)
+   - Delete remote branches created by this job
+   - Delete local branches created by this job
+   - Remove worktrees created by this job
+5. **Set final state:** Parent sets `await DBOS.set_event("cancel_state", "cancelled")`
+
+Cleanup is idempotent — each operation handles "already done" gracefully. If the process crashes during cleanup, `DBOS.launch()` recovers and re-runs from the last completed cleanup step.
 
 ---
 
@@ -335,6 +436,14 @@ To prevent agent prompt bloat from injected knowledge:
 - `query_knowledge` results are capped at 5 entries by default, configurable via the tool's `limit` parameter (max 50)
 - Total injected context (system_prompt + knowledge index) should not exceed 20% of the model's context window. The bootstrap sets a `max_knowledge_tokens` based on the model tier.
 
+### Degraded Knowledge Behavior
+
+When SurrealDB and/or Ollama are unavailable (detected during bootstrap):
+- `query_knowledge` tool is **OMITTED** from `allowed_tools` entirely — not registered with the SDK, so agents cannot call it. This avoids agents attempting calls that would fail.
+- Memory index returns the empty template (already handled by `build_memory_index_safe` — returns `""` on failure)
+- Bootstrap logs: `"Knowledge system unavailable — agents will work without knowledge context"`
+- This is why `invoke_agent_step` conditionally includes `query_knowledge` in the tools list only when `knowledge_store is not None`
+
 ---
 
 ## Adaptation vs Rewrite
@@ -384,7 +493,7 @@ The spec's "modified" category means **adapt the existing tested logic**, not re
 | `tests/concurrency/test_queue.py` | **Delete** | SQLite queue removed |
 | `tests/concurrency/test_durable_sleep.py` | **Delete** | Replaced by DBOS.sleep_async |
 | `tests/concurrency/test_rate_limit.py` | **Adapt** | Remove SQLite pause flag tests, keep error parsing |
-| `tests/concurrency/test_rate_limit_invoke.py` | **Delete** | Replaced by DBOS step retry |
+| `tests/concurrency/test_rate_limit_invoke.py` | **Delete** | Replaced by in-step retry logic in invoke_agent_step |
 | `tests/concurrency/test_priority.py` | Keep unchanged | Priority logic doesn't change |
 | `tests/concurrency/test_approval.py` | Keep unchanged | Approval logic doesn't change |
 | `tests/concurrency/test_config.py` | Keep unchanged | Config loading doesn't change |
@@ -419,27 +528,58 @@ V1 removes the daemon from the runtime path. Specific handling:
 
 ```python
 @DBOS.workflow()
-async def execute_job(job_id: str, spec: str, plan: str, config: dict) -> JobResult:
+async def execute_job(job_id: str, spec: str, plan: str, project_name: str, config: dict) -> JobResult:
+    # Check for pause/cancel between every major step
+    await check_control_messages()
+
     # Step 1: Route intake
     routing = await route_intake_step(spec, plan)
-    emit_event(job_id, "routed", routing.path.value)
+    await emit_log(f"Routed as {routing.path.value}")
+    await check_control_messages()
 
-    # Step 2: Decompose (skip for small_fix/research)
-    if routing.path in (RoutePath.FULL_PROJECT, RoutePath.OSS_CONTRIBUTION):
-        decomposition = await decompose_step(spec, plan, routing)
-        emit_event(job_id, "decomposed", f"{len(decomposition.tasks)} tasks")
+    # Step 2: Handle path-specific control flow
+    if routing.path == RoutePath.RESEARCH:
+        # Research: single agent call, no decomposition or PR
+        result = await invoke_agent_step(
+            role="planner_researcher_a",
+            prompt=build_research_prompt(spec, plan),
+            worktree_path=None,
+            project_name=project_name,
+        )
+        return JobResult(status="completed", research_result=result)
+
+    elif routing.path == RoutePath.SMALL_FIX:
+        # Small fix: create single-task decomposition inline, skip full DAG
+        task = TaskDecomposition(
+            id="T-1",
+            assigned_to=routing.recommended_role or "backend_engineer",
+            description=spec,
+            dependencies=[],
+        )
+        decomposition = Decomposition(tasks=[task], peer_assignments={})
+        parent_workflow_id = DBOS.workflow_id
+        handle = await DBOS.start_workflow_async(
+            execute_task, job_id, parent_workflow_id, task, decomposition, project_name, config
+        )
+        result = await handle.get_result()
+        await cleanup_step(job_id)
+        return JobResult(status="completed")
+
+    # Full project / OSS contribution: decompose and execute DAG
+    decomposition = await decompose_step(spec, plan, routing)
+    await emit_log(f"Decomposed into {len(decomposition.tasks)} tasks")
 
     # Step 3: Execute tasks via child workflows
-    parent_workflow_id = DBOS.workflow_id  # pass to children so they can send messages back
+    parent_workflow_id = DBOS.workflow_id
     task_handles = {}
     for task in get_ready_tasks(decomposition):
         handle = await DBOS.start_workflow_async(
-            execute_task, job_id, parent_workflow_id, task, config
+            execute_task, job_id, parent_workflow_id, task, decomposition, project_name, config
         )
         task_handles[task.id] = handle
 
     # Wait for all tasks, launching new ones as dependencies complete
-    await manage_dag_execution(job_id, decomposition, task_handles, config)
+    await manage_dag_execution(job_id, decomposition, task_handles, project_name, config)
 
     # Step 4: Post-PR review
     await run_post_pr_review_step(job_id, decomposition)
@@ -454,44 +594,64 @@ async def execute_job(job_id: str, spec: str, plan: str, config: dict) -> JobRes
 
 ```python
 @DBOS.workflow()
-async def execute_task(job_id: str, parent_workflow_id: str, task: TaskDecomposition, config: dict) -> TaskResult:
+async def execute_task(job_id: str, parent_workflow_id: str, task: TaskDecomposition, decomposition: Decomposition, project_name: str, config: dict) -> TaskResult:
     # Create isolated worktree
     worktree = await create_worktree_step(task)
 
-    max_revisions = config.get("max_revisions", 3)
+    max_revisions = config.get("pr", {}).get("max_fix_iterations", 3)
     revision_count = 0
+    revision_feedback: str | None = None
 
     while revision_count <= max_revisions:
+        # Check for operator comments before each agent invocation
+        comments = []
+        while True:
+            msg = await DBOS.recv(topic="comment", timeout_seconds=0)
+            if msg is None:
+                break
+            comments.append(msg)
+
+        # Check for pause control messages
+        await check_pause()
+
+        # Build prompt, incorporating any operator comments
+        prompt = build_task_prompt(task, revision_feedback)
+        if comments:
+            prompt += "\n\nOperator feedback:\n" + "\n".join(comments)
+
         # Invoke engineer agent
         impl = await invoke_agent_step(
             role=task.assigned_to,
-            prompt=build_task_prompt(task, revision_feedback),
+            prompt=prompt,
             worktree_path=worktree,
-            project=config["project"],
+            project_name=project_name,
         )
 
-        # Handle questions
+        # Handle questions — set event on self (visible to UI), wait for answer via recv
         if impl.status in ("needs_clarification", "blocked"):
             question = create_question(impl, task)
-            await DBOS.send_async(destination_id=parent_workflow_id, message=question, topic=f"question:{question.id}")
+            await DBOS.set_event(f"question:{question.id}", question.model_dump())
 
-            # Wait for operator answer via DBOS messaging
-            answer = await DBOS.recv_async(f"answer:{question.id}", timeout=None)
+            # Wait for operator answer — UI sends directly to this child workflow
+            answer = await DBOS.recv(topic=f"answer:{question.id}")
             revision_feedback = f"Answer to your question: {answer}"
             continue
 
-        # Peer review
-        review = await invoke_agent_step(
-            role=task.peer_reviewer,
-            prompt=build_review_prompt(impl, task),
-            worktree_path=worktree,
-            project=config["project"],
-        )
-
-        if review.needs_revision:
-            revision_feedback = format_revision_feedback(review)
-            revision_count += 1
-            continue
+        # Peer review — look up reviewer from decomposition peer_assignments
+        peer_reviewer = decomposition.peer_assignments.get(task.id)
+        if not peer_reviewer:
+            await emit_log(f"No peer reviewer assigned for {task.id}, skipping peer review")
+        else:
+            review = await invoke_agent_step(
+                role=peer_reviewer,
+                prompt=build_review_prompt(impl, task),
+                worktree_path=worktree,
+                project_name=project_name,
+            )
+            if review.needs_revision:
+                revision_feedback = format_revision_feedback(review)
+                revision_count += 1
+                continue
 
         # EM review
         em_review = await invoke_agent_step(...)
@@ -502,7 +662,7 @@ async def execute_task(job_id: str, parent_workflow_id: str, task: TaskDecomposi
 
         # Approved — create PR
         pr = await create_pr_step(task, worktree)
-        await DBOS.send_async(destination_id=parent_workflow_id, message=pr, topic=f"pr:{task.id}")
+        await DBOS.set_event(f"pr:{task.id}", pr.model_dump())  # visible to UI via event polling
         return TaskResult(status="completed", pr=pr)
 
     # Max revisions exceeded
@@ -512,10 +672,10 @@ async def execute_task(job_id: str, parent_workflow_id: str, task: TaskDecomposi
 ### Agent Invocation Step
 
 ```python
-@DBOS.step(retries_allowed=True, max_attempts=3, interval_seconds=60, backoff_rate=2.0)
-async def invoke_agent_step(role: str, prompt: str, worktree_path: str, project: str) -> BaseModel:
+@DBOS.step(retries_allowed=False)
+async def invoke_agent_step(role: str, prompt: str, worktree_path: str, project_name: str, max_retries: int = 3) -> BaseModel:
     # 1. Build knowledge context
-    knowledge_index = await build_memory_index_safe(knowledge_store, project)
+    knowledge_index = await build_memory_index_safe(knowledge_store, project_name)
 
     # 2. Get agent definition from registry
     defn = agent_registry.get(role)
@@ -523,23 +683,45 @@ async def invoke_agent_step(role: str, prompt: str, worktree_path: str, project:
     # 3. Build full prompt with knowledge injection
     full_system_prompt = f"{defn.prompt}\n\n{knowledge_index}"
 
-    # 4. Call Claude Agent SDK
-    result = await claude_sdk_query(
-        prompt=prompt,
-        options=ClaudeAgentOptions(
-            model=defn.model,
-            system_prompt=full_system_prompt,
-            allowed_tools=list(defn.tools) + ["query_knowledge"],
-            permission_mode="default",
-            cwd=worktree_path,
-            output_format=get_output_schema(role),
-        ),
-    )
+    # 4. Build SDK options — omit query_knowledge if knowledge system unavailable
+    tools = list(defn.tools)
+    if knowledge_store is not None:
+        tools.append("query_knowledge")
 
-    # 5. Extract knowledge from response
-    await extract_knowledge_from_response(result, project, role)
+    # 5. Call Claude Agent SDK with manual rate-limit retry
+    #    DBOS step retry uses static decorator args and cannot honor dynamic
+    #    retry-after headers from Claude. We handle retry ourselves inside the step.
+    last_error = None
+    for attempt in range(max_retries + 1):
+        try:
+            result = await claude_sdk_query(
+                prompt=prompt,
+                options=ClaudeAgentOptions(
+                    model=defn.model,
+                    system_prompt=full_system_prompt,
+                    allowed_tools=tools,
+                    permission_mode="default",
+                    cwd=worktree_path,
+                    output_format=get_output_schema(role),
+                ),
+            )
+            break
+        except RateLimitError as e:
+            last_error = e
+            backoff_seconds = parse_retry_after(e) or (60 * (2 ** attempt))
+            await DBOS.sleep_async(backoff_seconds)
+        except AgentInvocationError:
+            raise  # Auth errors, context exceeded, model unavailable — propagate immediately
+    else:
+        raise last_error  # Max retries exceeded on rate limit
 
-    # 6. Return typed result
+    # 6. Extract knowledge from response (best-effort, don't fail the step)
+    try:
+        await extract_knowledge_from_response(result, project_name, role)
+    except Exception:
+        pass  # Knowledge extraction failure should not block task completion
+
+    # 7. Return typed result
     return parse_agent_result(role, result)
 ```
 
@@ -556,7 +738,7 @@ async def claude_sdk_query(prompt: str, options: ClaudeAgentOptions) -> AgentRes
     4. Checks is_error and structured_output
     5. Returns the parsed AgentResponse
 
-    The @DBOS.step() decorator on invoke_agent_step handles retry —
+    The calling code in invoke_agent_step handles rate-limit retry —
     this function just makes the call and raises on failure.
     """
     from claude_agent_sdk import query
@@ -572,7 +754,7 @@ async def claude_sdk_query(prompt: str, options: ClaudeAgentOptions) -> AgentRes
     raise AgentInvocationError("No ResultMessage received from SDK")
 ```
 
-DBOS retry handles rate limit errors: if the step throws, DBOS waits with exponential backoff and retries automatically. No custom retry wrapper needed.
+Rate limit retry is handled INSIDE the step body: catch `RateLimitError`, parse the `retry-after` header, sleep with `await DBOS.sleep_async(seconds)`, then retry within the loop. The step has `retries_allowed=False` — DBOS does not retry it automatically. This allows honoring dynamic backoff values from Claude's API response headers.
 
 ---
 
@@ -589,7 +771,12 @@ async def bootstrap(spec: str, plan: str) -> WorkflowHandle:
 
     # 2. Initialize DBOS
     # DBOS v2.16+ uses SQLite by default (no PostgreSQL required).
-    # The system database is created automatically at ./dbos.sqlite
+    # Canonical database path: ~/.devteam/devteam_system.sqlite
+    # Configured explicitly to avoid ambiguity between ./dbos.sqlite and ~/.devteam/
+    DBOS(config={
+        "name": "devteam",
+        "system_database_url": "sqlite:///~/.devteam/devteam_system.sqlite",
+    })
     DBOS.launch()
 
     # 3. Connect knowledge store (graceful degradation)
@@ -630,6 +817,7 @@ async def bootstrap(spec: str, plan: str) -> WorkflowHandle:
         job_id=generate_job_id(),
         spec=spec,
         plan=plan,
+        project_name=config.general.project_name,
         config=config.model_dump(),
     )
 
@@ -664,19 +852,23 @@ async def run_interactive_session(handle: WorkflowHandle):
 - `/verbose` mode switches a task's formatter to stream the full agent response
 
 **Command dispatch:**
-- `/answer Q-1 text` → `await DBOS.send_async(destination_id=child_workflow_id, message=text, topic="answer:Q-1")`
-- `/pause` → `await DBOS.set_event_async("paused", True)` on parent workflow
-- `/resume` → `await DBOS.set_event_async("paused", False)` on parent workflow
+- `/answer Q-1 text` → `await DBOS.send(destination_id=child_workflow_id, message=text, topic="answer:Q-T2-1")`
+- `/pause` → `await DBOS.send_async(destination_id=parent_workflow_id, message=True, topic="control:pause")` — also fans out to all active child workflows
+- `/resume` → `await DBOS.send_async(destination_id=parent_workflow_id, message=True, topic="control:resume")` — also fans out to all active child workflows
 - `/cancel` → cancel workflow + trigger cleanup workflow
+- `/priority T-3 high` → `await DBOS.send_async(destination_id=parent_workflow_id, message={"task_id": "T-3", "priority": "high"}, topic="control:priority")`
 - `/status` → read DBOS workflow status + child workflow statuses
 
-**Tier 1 blocking:**
-- When a Tier 1 question event arrives, the UI:
+**Tier 1 blocking (= Tier 2 question + global pause):**
+- When the UI detects a Tier 1 question (from polling child events where `question_data.tier == 1`), it:
+  - Sends `control:pause` to the parent workflow and all active child workflows (same as `/pause`)
   - Pauses event rendering
   - Changes the input prompt to `BLOCKING Q-1> `
   - Waits for the operator's response
-  - Sends the answer via `DBOS.send_async()`
+  - Sends the answer via `DBOS.send_async(destination_id=child_workflow_id, ...)`
+  - Sends `control:resume` to the parent workflow and all active child workflows (same as `/resume`)
   - Resumes event rendering
+- This ensures ALL agent work pauses when a Tier 1 question is raised, not just the child that raised it
 
 ---
 
@@ -685,12 +877,24 @@ async def run_interactive_session(handle: WorkflowHandle):
 **Agent concurrency** is controlled by `config.general.max_concurrent_agents` (default 3). The parent workflow's DAG execution loop limits how many child task workflows are running simultaneously by tracking active handles and only launching new ones when a slot opens.
 
 ```python
-async def manage_dag_execution(job_id, decomposition, initial_handles, config):
+async def manage_dag_execution(job_id, decomposition, initial_handles, project_name, config):
     max_concurrent = config["general"]["max_concurrent_agents"]
     active = dict(initial_handles)  # task_id -> handle
     completed = {}
+    priority_overrides = {}  # task_id -> Priority
 
     while active or has_pending_tasks(decomposition, completed):
+        # Check for pause control messages
+        await check_pause()
+
+        # Check for priority override messages (only affect not-yet-started tasks)
+        while True:
+            msg = await DBOS.recv(topic="control:priority", timeout_seconds=0)
+            if msg is None:
+                break
+            # msg = {"task_id": "T-3", "priority": "high"}
+            priority_overrides[msg["task_id"]] = Priority(msg["priority"])
+
         # Wait for any active task to complete
         if active:
             done_id, result = await wait_for_any(active)
@@ -698,15 +902,22 @@ async def manage_dag_execution(job_id, decomposition, initial_handles, config):
             del active[done_id]
 
         # Launch newly ready tasks up to concurrency limit
-        for task in get_ready_tasks(decomposition, completed):
+        # Priority overrides affect ordering of ready tasks
+        ready = get_ready_tasks(decomposition, completed)
+        ready = sorted(ready, key=lambda t: priority_overrides.get(t.id, t.priority), reverse=True)
+        for task in ready:
             if len(active) >= max_concurrent:
                 break
             if task.id not in active and task.id not in completed:
-                handle = await DBOS.start_workflow_async(execute_task, ...)
+                handle = await DBOS.start_workflow_async(
+                    execute_task, job_id, DBOS.workflow_id, task, decomposition, project_name, config
+                )
                 active[task.id] = handle
 ```
 
-**Rate limiting** is handled by DBOS step retry. When the Claude API returns a rate limit error, the `invoke_agent_step` throws, DBOS catches it, and retries after the configured backoff. No global pause flag needed — DBOS manages this per-step.
+**`/priority` command:** The UI sends priority changes to the parent workflow: `await DBOS.send_async(destination_id=parent_workflow_id, message={"task_id": "T-3", "priority": "high"}, topic="control:priority")`. Priority changes only affect not-yet-started tasks — tasks already running are unaffected. The parent checks for priority messages before selecting the next task to launch.
+
+**Rate limiting** is handled by custom retry logic INSIDE `invoke_agent_step`. The step has `retries_allowed=False` — DBOS does not retry it automatically. When the Claude API returns a rate limit error, the step catches `RateLimitError`, parses the `retry-after` header via `parse_retry_after()` (from `concurrency/rate_limit.py`), sleeps with `await DBOS.sleep_async(seconds)` (durable — survives crash), then retries within the step body. This allows honoring dynamic backoff values from the API. No global pause flag needed.
 
 **Approval gates** remain as configured in `config.approval`. Before side-effecting git operations (commit, push, open_pr, merge), the workflow checks `check_approval(action, config)`. If `manual`, it emits a Tier 1 question. If `never`, it skips. If `auto`, it proceeds. `push_to_main` is always `never`.
 
@@ -724,9 +935,9 @@ async def manage_dag_execution(job_id, decomposition, initial_handles, config):
 | `concurrency/queue.py` | DBOS workflow concurrency replaces SQLite queue |
 | `concurrency/durable_sleep.py` | `DBOS.sleep_async()` replaces custom durable sleep |
 | `concurrency/rate_limit.py` (pause flag functions) | Pause coordination replaced by DBOS events |
-| `concurrency/invoke.py` | DBOS step retry replaces custom retry wrapper |
+| `concurrency/invoke.py` | Custom in-step retry replaces the external retry wrapper |
 
-> **Keep in `rate_limit.py`:** `_parse_reset_seconds()` and `handle_rate_limit_error()` -- error parsing is still needed for DBOS step retry to detect rate limit errors and determine backoff.
+> **Keep in `rate_limit.py`:** `_parse_reset_seconds()` and `handle_rate_limit_error()` -- error parsing is still needed for the custom retry logic inside `invoke_agent_step` to parse `retry-after` headers and determine backoff duration.
 
 ## What Gets Kept (No Changes)
 
@@ -739,7 +950,7 @@ async def manage_dag_execution(job_id, decomposition, initial_handles, config):
 | `agents/template_manager.py` | Template copying, unchanged |
 | `models/entities.py` | Entity models and Priority enum, unchanged |
 | `models/state.py` | State transitions, unchanged |
-| `config/settings.py` | Config loading, unchanged |
+| `config/settings.py` | **Moved to Modified** — see below |
 | `concurrency/priority.py` | Priority ordering, used by DAG scheduler |
 | `concurrency/approval.py` | Approval gates, called from workflow steps |
 | `concurrency/config.py` | Config loading for concurrency settings |
@@ -757,6 +968,7 @@ async def manage_dag_execution(job_id, decomposition, initial_handles, config):
 | `orchestrator/dag.py` | Replace with DBOS parent/child workflow pattern |
 | `agents/invoker.py` | Rewrite as `@DBOS.step()`, call real SDK, inject knowledge |
 | `cli/commands/job_cmd.py` | `start` launches DBOS workflow + interactive session |
+| `config/settings.py` | Add DBOS database path config, polling interval config, interactive UI settings |
 | `cli/main.py` | Wire interactive session, remove daemon commands |
 
 ## What Gets Added
