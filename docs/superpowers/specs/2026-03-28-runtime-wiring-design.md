@@ -58,7 +58,7 @@ devteam start --spec spec.md --plan plan.md
 
 The CLI:
 1. Loads and merges config (`~/.devteam/config.toml` + project `devteam.toml`)
-2. Calls `DBOS.launch(config={"name": "devteam", "database": {"app_db_name": "devteam_system"}})` — creates/opens the DBOS SQLite database with a canonical name
+2. Initializes DBOS via `DBOS(config={"name": "devteam", "database": {"app_db_name": "devteam_system"}})` then calls `DBOS.launch()` — creates/opens the DBOS SQLite database
 3. Connects to SurrealDB and Ollama (graceful degradation if unavailable)
 4. Starts the `execute_job` workflow via `DBOS.start_workflow_async()`
 5. Enters the interactive terminal session
@@ -198,7 +198,7 @@ def mint_question_id() -> str:
     return f"Q-{question_counter}"
 ```
 
-When a child workflow needs to raise a question, it calls back to the parent's `mint_question_id()` via a message round-trip, or more simply: each child is given a pre-allocated question ID range at launch (e.g., T-1 gets Q-100..Q-199, T-2 gets Q-200..Q-299) to avoid contention. Alternatively, the child mints its own IDs scoped as `Q-{task_id}-{local_counter}` (e.g., `Q-T2-1`), which are inherently unique within the job.
+Each child mints its own IDs scoped to its task: `Q-{task_id}-{local_counter}` (e.g., `Q-T2-1`). This is inherently unique within the job since task IDs are unique and each child owns its own counter. No parent coordination needed.
 
 ---
 
@@ -282,7 +282,7 @@ DBOS provides two distinct communication primitives. The split is intentional:
 
 ## Terminal Event Transport
 
-DBOS events are key-value snapshots, not an append-only log. `get_all_events_async()` returns the latest value per key. To build a scrolling log:
+DBOS events are key-value snapshots, not an append-only log. `get_all_events_async(workflow_id)` returns `Dict[str, Any]` — a dict mapping event keys to their latest values. To build a scrolling log:
 
 **Sequenced event keys:** Each workflow emits events with auto-incrementing keys:
 - `log:000001` → `"Routing... full_project"`
@@ -610,6 +610,7 @@ async def execute_task(job_id: str, parent_workflow_id: str, task: TaskDecomposi
 
     max_revisions = config.get("pr", {}).get("max_fix_iterations", 3)
     revision_count = 0
+    revision_feedback: str | None = None
 
     while revision_count <= max_revisions:
         # Check for operator comments before each agent invocation
@@ -775,10 +776,11 @@ async def bootstrap(spec: str, plan: str) -> WorkflowHandle:
     # DBOS v2.16+ uses SQLite by default (no PostgreSQL required).
     # Canonical database path: ~/.devteam/devteam_system.sqlite
     # Configured explicitly to avoid ambiguity between ./dbos.sqlite and ~/.devteam/
-    DBOS.launch(config={
+    DBOS(config={
         "name": "devteam",
         "database": {"app_db_name": "devteam_system"},
     })
+    DBOS.launch()
 
     # 3. Connect knowledge store (graceful degradation)
     knowledge_store = None
