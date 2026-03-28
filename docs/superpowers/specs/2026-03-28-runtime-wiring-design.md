@@ -158,6 +158,256 @@ When a Tier 1 question arrives:
 
 ---
 
+## Canonical Identifiers
+
+**Job ID (`W-1`)** is a user-facing alias. The DBOS `workflow_id` is the real identifier — a UUID assigned by DBOS when the workflow starts. A mapping table in DBOS state links `W-1` → `workflow_uuid`. All internal routing uses the DBOS workflow_id. The CLI translates `W-1` to the UUID before any operation.
+
+**Task ID (`T-1`)** maps to a child workflow. Each task's DBOS workflow_id is stored as a DBOS event on the parent workflow: `set_event("task:T-1:workflow_id", child_uuid)`.
+
+**Question ID (`Q-1`)** is a DBOS message topic. Questions are sent from child workflows to the parent via `send("question:Q-1", question_data)`. Answers are sent from the UI to the specific child workflow via `send(child_workflow_id, "answer:Q-1", answer_text)`.
+
+---
+
+## Communication Model
+
+### Workflow Responsibilities
+
+**Parent workflow (`execute_job`):**
+- Owns the job lifecycle (routing → decomposition → DAG → review → cleanup)
+- Launches child workflows for each task
+- Does NOT relay messages — the UI communicates directly with child workflows
+- Emits sequenced log events for the terminal UI
+- Receives `/pause` and `/cancel` commands
+
+**Child workflows (`execute_task`):**
+- Own individual task execution (engineer → peer review → EM review → PR)
+- Raise questions via `DBOS.set_event_async("question:Q-1", question_data)` on the parent workflow
+- Wait for answers via `DBOS.recv_async("answer:Q-1")`
+- Emit log events on themselves (the UI polls both parent and child events)
+
+**Terminal UI:**
+- Polls events from the parent workflow AND all active child workflows
+- Routes `/answer Q-1 text` by looking up which child workflow owns Q-1, then `DBOS.send_async(child_workflow_id, "answer:Q-1", text)`
+- Routes `/comment T-1 text` by looking up T-1's child workflow_id, then `DBOS.send_async(child_workflow_id, "comment", text)`
+- Routes `/pause` and `/cancel` to the parent workflow
+
+### Message Flow Diagram
+
+```
+Operator types: /answer Q-1 Use JWT
+
+Terminal UI:
+  1. Looks up Q-1 → owned by child workflow for T-2 (UUID: abc-123)
+  2. DBOS.send_async("abc-123", "answer:Q-1", "Use JWT")
+
+Child workflow (T-2):
+  3. answer = await DBOS.recv_async("answer:Q-1")  # unblocks
+  4. Incorporates answer into next engineer prompt
+  5. DBOS.set_event_async("log:00047", "T-2 question Q-1 answered, resuming")
+
+Terminal UI:
+  6. Polls events, renders: "[W-1/T-2] Question Q-1 answered, resuming"
+```
+
+---
+
+## Terminal Event Transport
+
+DBOS events are key-value snapshots, not an append-only log. `get_all_events_async()` returns the latest value per key. To build a scrolling log:
+
+**Sequenced event keys:** Each workflow emits events with auto-incrementing keys:
+- `log:000001` → `"Routing... full_project"`
+- `log:000002` → `"Decomposing... 4 tasks created"`
+- `log:000003` → `"T-1 backend_engineer starting"`
+
+The UI tracks the last-seen sequence number per workflow and only renders new entries on each poll tick.
+
+**Implementation:**
+
+```python
+# In workflow code:
+async def emit_event(message: str, level: str = "info"):
+    seq = DBOS.step_id  # auto-incrementing within the workflow
+    await DBOS.set_event_async(f"log:{seq:06d}", {
+        "message": message, "level": level, "timestamp": time.time()
+    })
+
+# In terminal UI:
+async def poll_events(workflow_id: str, last_seen: int) -> list[dict]:
+    all_events = await DBOS.get_all_events_async(workflow_id)
+    new_events = {k: v for k, v in all_events.items()
+                  if k.startswith("log:") and int(k.split(":")[1]) > last_seen}
+    return [new_events[k] for k in sorted(new_events)]
+```
+
+---
+
+## Pause Semantics
+
+**`/pause` is an operator gate, not a DBOS cancel.**
+
+Implementation: the parent workflow checks a pause flag before launching new child workflows or new steps. Active child workflows run to their current step's completion, then check the flag before starting the next step.
+
+```python
+# Pause flag stored as a DBOS event on the parent workflow
+await DBOS.set_event_async("paused", True)   # /pause
+await DBOS.set_event_async("paused", False)  # /resume
+
+# Inside workflows, before each major step:
+async def check_pause(workflow_id: str):
+    while True:
+        events = await DBOS.get_all_events_async(workflow_id)
+        if not events.get("paused", False):
+            return
+        await DBOS.sleep_async(1)  # durable sleep — survives crash
+```
+
+**Behavior:**
+- `/pause` → sets flag, active steps finish, no new steps start, UI shows "PAUSED"
+- `/resume` → clears flag, workflows continue from where they paused
+- `/cancel` → triggers cleanup workflow (close PRs, delete branches, remove worktrees), terminates all child workflows
+- Pause does NOT run cleanup. Cancel does.
+- Child workflows are not individually pausable — pause is global per job.
+
+---
+
+## Idempotency Rules
+
+Every `@DBOS.step()` must be idempotent on retry. DBOS replays steps after crash recovery, so a step that ran partially before the crash may run again.
+
+| Side Effect | Idempotency Strategy |
+|-------------|---------------------|
+| Worktree creation | `create_worktree()` already checks if worktree exists for branch, returns existing |
+| Agent invocation | NOT idempotent — agent may produce different output. This is acceptable: the step result is stored by DBOS, so replayed steps use the stored result, not a new invocation |
+| Knowledge extraction | Idempotent — `create_entry()` with same content is a no-op (or upsert by content hash) |
+| Git commit | Check if HEAD already has the expected changes before committing |
+| Git push | `push` with same content is a no-op (remote already has the commits) |
+| PR creation | `create_pr()` already calls `find_existing_pr()` first — returns existing PR |
+| PR merge | `merge_pr()` already handles "already merged" as a no-op |
+| Worktree cleanup | `remove_worktree()` already handles "doesn't exist" as a no-op |
+| Branch deletion | `delete_local_branch()` and `delete_remote_branch()` already handle "doesn't exist" |
+
+**Key insight:** DBOS stores the return value of each completed step. On replay, completed steps return the stored value without re-executing. Only the step that was interrupted needs to re-run. So most idempotency concerns are already handled by DBOS's replay mechanism. The explicit idempotency above is a safety net for the edge case where a step partially executed before the crash.
+
+---
+
+## DBOS Queue Evaluation
+
+The spec uses manual parent-managed concurrency (tracking active child workflow handles) instead of DBOS Queue. Justification:
+
+**Why not DBOS Queue for agent concurrency:**
+- Our DAG has dependency ordering — tasks must wait for their dependencies, not just a slot. DBOS Queue is FIFO or priority-ordered, but doesn't understand dependency graphs.
+- The parent workflow already manages the DAG — it knows which tasks are ready, which are blocked, and which slots are available. Adding a queue between the parent and child workflows adds indirection without value.
+- Priority changes (`/priority T-3 high`) need to affect the DAG scheduler's next-task selection, which is easier when the parent owns the decision directly.
+
+**Where DBOS Queue could help (future):**
+- Multi-job concurrency — if two jobs share a global agent slot pool, a DBOS Queue could manage the shared pool. Deferred to V2.
+
+---
+
+## query_knowledge Tool Registration
+
+The Claude Agent SDK allows registering custom tools that agents can call during execution. `query_knowledge` is registered as follows:
+
+```python
+# In invoke_agent_step, when building ClaudeAgentOptions:
+options = ClaudeAgentOptions(
+    model=defn.model,
+    system_prompt=full_system_prompt,
+    allowed_tools=list(defn.tools),  # includes "query_knowledge"
+    permission_mode="default",
+    cwd=worktree_path,
+    output_format=get_output_schema(role),
+    # Custom tool definitions:
+    custom_tools=[query_knowledge_tool.tool_definition()],
+)
+```
+
+The `custom_tools` field passes the JSON schema definition to the SDK, which makes it available for the agent to call. When the agent calls `query_knowledge(query="...", scope="...")`, the SDK invokes our `QueryKnowledgeTool.query()` method and returns the result to the agent.
+
+**Note:** The exact SDK field name for custom tool registration (`custom_tools`, `tools`, or `tool_definitions`) must be verified against the actual Claude Agent SDK documentation at implementation time. The schema shape from `tool_definition()` is already correct.
+
+### Knowledge Context Size Limits
+
+To prevent agent prompt bloat from injected knowledge:
+- Memory index is capped at 50 lines / ~3KB (already enforced by `MemoryIndexBuilder` — max 10 topics per section)
+- `query_knowledge` results are capped at 5 entries by default, configurable via the tool's `limit` parameter (max 50)
+- Total injected context (system_prompt + knowledge index) should not exceed 20% of the model's context window. The bootstrap sets a `max_knowledge_tokens` based on the model tier.
+
+---
+
+## Adaptation vs Rewrite
+
+The spec's "modified" category means **adapt the existing tested logic**, not rewrite from scratch. Specifically:
+
+| Module | Adaptation approach |
+|--------|-------------------|
+| `orchestrator/routing.py` | Add `async` keyword + `@DBOS.step()` decorator. The `route_intake()` logic, `classify_intake()`, and `build_routing_prompt()` remain unchanged. |
+| `orchestrator/decomposition.py` | Add `async` + `@DBOS.step()`. The `decompose()`, `validate_decomposition()`, and `assign_peer_reviewers()` logic stays. |
+| `orchestrator/task_workflow.py` | Restructure as `@DBOS.workflow()`. The revision loop, review chain ordering, and feedback formatting logic are preserved — the control flow wrapper changes. |
+| `orchestrator/review.py` | Add `async` + `@DBOS.step()`. `get_review_chain()`, `execute_post_pr_review()`, and gate logic stay. |
+| `orchestrator/escalation.py` | Add `async`. Replace manual question tracking with `DBOS.send()`/`recv()`. The escalation path logic and attempt_resolution logic stay. |
+| `orchestrator/dag.py` | Replace `DAGExecutor` with DBOS parent workflow pattern. The DAG state tracking, ready-task detection, and dependency logic are preserved. |
+| `agents/invoker.py` | Rewrite `invoke()` as `@DBOS.step()`. The `build_query_params()` logic is preserved. `QueryOptions` mapping is preserved. The actual SDK call wrapper is new. |
+
+**Principle:** Convert boundaries first (sync→async, add decorators), behavior second (only change control flow where DBOS requires it). Run existing unit tests after each conversion to verify logic preservation.
+
+---
+
+## Test Migration
+
+| Test Suite | Action | Reason |
+|-----------|--------|--------|
+| `tests/test_models.py` | Keep unchanged | Entity models don't change |
+| `tests/test_state.py` | Keep unchanged | State machines don't change |
+| `tests/test_config.py` | Keep unchanged | Config loading doesn't change |
+| `tests/test_daemon.py` | **Delete** | Daemon is removed |
+| `tests/test_cli.py` | **Adapt** | Job commands change to use DBOS workflows |
+| `tests/test_integration.py` | **Replace** | New end-to-end tests with DBOS |
+| `tests/agents/*` | Keep unchanged | Agent library tests don't change |
+| `tests/orchestrator/test_routing.py` | **Adapt** | Add async, mock DBOS context |
+| `tests/orchestrator/test_decomposition.py` | **Adapt** | Add async, mock DBOS context |
+| `tests/orchestrator/test_task_workflow.py` | **Adapt** | Restructure for DBOS workflow pattern |
+| `tests/orchestrator/test_review.py` | **Adapt** | Add async, mock DBOS context |
+| `tests/orchestrator/test_escalation.py` | **Adapt** | Add async, use DBOS send/recv mocks |
+| `tests/orchestrator/test_dag.py` | **Adapt** | Replace DAGExecutor tests with DBOS parent workflow tests |
+| `tests/orchestrator/test_jobs.py` | **Replace** | JobStore tests become DBOS workflow tests |
+| `tests/orchestrator/test_cli_bridge.py` | **Delete** | cli_bridge is removed |
+| `tests/orchestrator/test_integration.py` | **Replace** | New DBOS-based integration tests |
+| `tests/git/*` | Keep unchanged | Git library tests don't change |
+| `tests/knowledge/*` | Keep unchanged | Knowledge library tests don't change |
+| `tests/concurrency/test_queue.py` | **Delete** | SQLite queue removed |
+| `tests/concurrency/test_durable_sleep.py` | **Delete** | Replaced by DBOS.sleep_async |
+| `tests/concurrency/test_rate_limit.py` | **Adapt** | Remove SQLite pause flag tests, keep error parsing |
+| `tests/concurrency/test_rate_limit_invoke.py` | **Delete** | Replaced by DBOS step retry |
+| `tests/concurrency/test_priority.py` | Keep unchanged | Priority logic doesn't change |
+| `tests/concurrency/test_approval.py` | Keep unchanged | Approval logic doesn't change |
+| `tests/concurrency/test_config.py` | Keep unchanged | Config loading doesn't change |
+| `tests/concurrency/test_status_display.py` | Keep unchanged | Formatter logic doesn't change |
+| `tests/concurrency/test_integration.py` | **Replace** | New DBOS-based integration |
+| `tests/concurrency/test_cli_priority.py` | **Adapt** | Update for new CLI structure |
+| `tests/cli/test_git_commands.py` | Keep unchanged | Git CLI doesn't change |
+| `tests/cli/test_knowledge_cmd.py` | Keep unchanged | Knowledge CLI doesn't change |
+| `tests/cli/test_concurrency_cmd.py` | **Adapt** | Update for new CLI structure |
+
+---
+
+## Daemon Deprecation
+
+V1 removes the daemon from the runtime path. Specific handling:
+
+| Item | Action |
+|------|--------|
+| `daemon/server.py` | Delete source file |
+| `daemon/process.py` | Delete source file |
+| `daemon/database.py` | Delete source file |
+| `daemon/__init__.py` | Keep empty (package may be reused in V2) |
+| `DaemonConfig` in `settings.py` | Keep for now — the `port` field is harmless and may be useful for V2 |
+| `daemon start/stop/status` CLI commands | Remove from `cli/main.py` registration. Delete `cli/commands/daemon_cmd.py` |
+| `tests/test_daemon.py` | Delete |
+| `fastapi` dependency | Move from runtime to dev-only in `pyproject.toml` |
+| `uvicorn` dependency | Move from runtime to dev-only in `pyproject.toml` |
+
 ## Workflow Architecture
 
 ### Parent Workflow: execute_job
