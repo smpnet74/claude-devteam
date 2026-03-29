@@ -254,3 +254,22 @@ class TestCleanupStepExtended:
 
             with pytest.raises(OSError, match="permission denied"):
                 await _run()
+
+    @pytest.mark.asyncio
+    async def test_cancel_error_propagates(self, dbos_launch: Any, tmp_path: Path) -> None:
+        """Errors from cleanup_single_pr propagate."""
+        from devteam.orchestrator.runtime import cleanup_step
+
+        with patch(
+            "devteam.orchestrator.runtime.cleanup_single_pr",
+            side_effect=RuntimeError("gh api failed"),
+        ):
+
+            @DBOS.workflow()
+            async def _run() -> CleanupResult:
+                return await cleanup_step(
+                    repo_root=tmp_path, branch="feat/x", mode="cancel", pr_number=42
+                )
+
+            with pytest.raises(RuntimeError, match="gh api failed"):
+                await _run()
