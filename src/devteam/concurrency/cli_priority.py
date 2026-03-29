@@ -11,7 +11,8 @@ import sqlite3
 from dataclasses import dataclass
 
 from devteam.concurrency.priority import Priority
-from devteam.concurrency.queue import PENDING
+
+PENDING = "pending"  # Queue status constant (was in queue.py, now local)
 
 
 @dataclass
