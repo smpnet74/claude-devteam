@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from dbos import DBOS
 
@@ -218,21 +218,32 @@ async def execute_job(
     routing = await route_intake_step(ctx, project_name=project_name, worktree_path=repo_root)
 
     # Step 2: Handle by route type
+    # Resolve job alias early — all routes need it
+    job_record = store.get_job_by_workflow_id(DBOS.workflow_id or "")
+    if not job_record:
+        raise RuntimeError(f"No job record for workflow {DBOS.workflow_id}")
+    job_alias = job_record.alias
+
     if routing.path == RoutePath.RESEARCH:
-        result = await invoke_agent_step(
-            role="chief_architect",
-            prompt=f"Research request:\n\n{spec or plan or ''}",
-            worktree_path=repo_root,
-            project_name=project_name,
-        )
-        job_record = store.get_job_by_workflow_id(DBOS.workflow_id or "")
-        if job_record:
-            store.update_job_status(job_record.alias, "completed")
-        return {"status": "completed", "route": "research", "result": result}
+        try:
+            result = await invoke_agent_step(
+                role="chief_architect",
+                prompt=f"Research request:\n\n{spec or plan or ''}",
+                worktree_path=repo_root,
+                project_name=project_name,
+            )
+            store.update_job_status(job_alias, "completed")
+            return {"status": "completed", "route": "research", "result": result}
+        except Exception as e:
+            store.update_job_status(job_alias, "failed")
+            raise RuntimeError(f"Research route failed for job {job_alias}: {e}") from e
 
     if routing.path == RoutePath.SMALL_FIX:
         # Single task — no decomposition needed
-        target_team = routing.target_team or "a"
+        raw_team = routing.target_team or "a"
+        if raw_team not in ("a", "b"):
+            raise ValueError(f"Unsupported target_team: {raw_team!r}")
+        target_team: Literal["a", "b"] = raw_team  # type: ignore[assignment]
         role = "backend_engineer" if target_team == "a" else "data_engineer"
         task = TaskDecomposition(
             id="T-1",
@@ -243,10 +254,6 @@ async def execute_job(
             pr_group="fix/small-fix",
             work_type=WorkType.CODE,
         )
-        job_record = store.get_job_by_workflow_id(DBOS.workflow_id or "")
-        if not job_record:
-            raise RuntimeError(f"No job record for workflow {DBOS.workflow_id}")
-        job_alias = job_record.alias
         store.register_task(
             alias="T-1",
             workflow_id=f"{DBOS.workflow_id or 'unknown'}-T-1",
@@ -272,11 +279,10 @@ async def execute_job(
         worktree_path=repo_root,
     )
 
-    # Register all tasks in runtime state
-    job_record = store.get_job_by_workflow_id(DBOS.workflow_id or "")
-    if not job_record:
-        raise RuntimeError(f"No job record for workflow {DBOS.workflow_id}")
-    job_alias = job_record.alias
+    # Validate DAG before persisting tasks (rejects cycles and unknown deps)
+    dag = build_dag(decomp)
+
+    # Register all tasks in runtime state (only after validation passes)
     for td in decomp.tasks:
         store.register_task(
             alias=td.id,
@@ -285,8 +291,7 @@ async def execute_job(
             assigned_to=td.assigned_to,
         )
 
-    # Build and execute DAG
-    dag = build_dag(decomp)
+    # Execute DAG (already validated above)
     task_results: dict[str, dict[str, Any]] = {}
 
     while dag.has_pending or dag.has_running:

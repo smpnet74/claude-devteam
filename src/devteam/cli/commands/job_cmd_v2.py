@@ -76,39 +76,45 @@ def register_job_commands_v2(app: typer.Typer) -> None:
         questions: bool = typer.Option(False, "--questions", help="Show pending questions"),
     ) -> None:
         """Show status of active jobs and tasks."""
-        store = _get_store()
         try:
-            if questions:
-                pending = store.get_pending_questions(job_alias=target)
-                if not pending:
-                    typer.echo("No pending questions.")
+            store = _get_store()
+            try:
+                if questions:
+                    pending = store.get_pending_questions(job_alias=target)
+                    if not pending:
+                        typer.echo("No pending questions.")
+                        return
+                    for q in pending:
+                        marker = "RESOLVED" if q.resolved else "PENDING"
+                        typer.echo(f"  {q.display_alias} [{marker}] ({q.task_alias}): {q.text}")
                     return
-                for q in pending:
-                    marker = "RESOLVED" if q.resolved else "PENDING"
-                    typer.echo(f"  {q.display_alias} [{marker}] ({q.task_alias}): {q.text}")
-                return
 
-            if target:
-                job = store.get_job(target)
-                if not job:
-                    typer.echo(f"Job {target} not found.")
-                    raise typer.Exit(code=1)
-                tasks = store.get_tasks_for_job(target)
-                typer.echo(f"Job {job.alias}: {job.status}")
-                typer.echo(f"  Project: {job.project_name}")
-                for t in tasks:
-                    typer.echo(f"  {t.alias}: {t.status} ({t.assigned_to})")
-            else:
-                active = store.get_active_jobs()
-                if not active:
-                    typer.echo("No active jobs.")
-                    return
-                for j in active:
-                    tasks = store.get_tasks_for_job(j.alias)
-                    done = sum(1 for t in tasks if t.status in ("completed", "failed"))
-                    typer.echo(f"  {j.alias}: {j.status} [{done}/{len(tasks)} tasks]")
-        finally:
-            store.close()
+                if target:
+                    job = store.get_job(target)
+                    if not job:
+                        typer.echo(f"Job {target} not found.")
+                        raise typer.Exit(code=1)
+                    tasks = store.get_tasks_for_job(target)
+                    typer.echo(f"Job {job.alias}: {job.status}")
+                    typer.echo(f"  Project: {job.project_name}")
+                    for t in tasks:
+                        typer.echo(f"  {t.alias}: {t.status} ({t.assigned_to})")
+                else:
+                    active = store.get_active_jobs()
+                    if not active:
+                        typer.echo("No active jobs.")
+                        return
+                    for j in active:
+                        tasks = store.get_tasks_for_job(j.alias)
+                        done = sum(1 for t in tasks if t.status in ("completed", "failed"))
+                        typer.echo(f"  {j.alias}: {j.status} [{done}/{len(tasks)} tasks]")
+            finally:
+                store.close()
+        except typer.Exit:
+            raise
+        except Exception as e:
+            typer.echo(f"Error: {e}")
+            raise typer.Exit(code=1)
 
     @app.command("answer")
     def answer(
@@ -116,7 +122,11 @@ def register_job_commands_v2(app: typer.Typer) -> None:
         response: str = typer.Argument(help="Your answer"),
     ) -> None:
         """Answer a pending question to unblock a task."""
-        store = _get_store()
+        try:
+            store = _get_store()
+        except Exception as e:
+            typer.echo(f"Error: {e}")
+            raise typer.Exit(code=1)
         try:
             q = store.lookup_question(question_ref)
             if q is None:
@@ -156,6 +166,7 @@ def register_job_commands_v2(app: typer.Typer) -> None:
             from dbos import DBOS
 
             devteam_dir = Path.home() / ".devteam"
+            devteam_dir.mkdir(parents=True, exist_ok=True)
             db_path = f"sqlite:///{devteam_dir / 'devteam_system.sqlite'}"
 
             DBOS(config={"name": "devteam", "system_database_url": db_path})

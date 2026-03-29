@@ -352,9 +352,14 @@ class TestExecuteJob:
     @pytest.mark.asyncio
     async def test_research_path(self, dbos_launch: Any, runtime_store: RuntimeStateStore) -> None:
         """Research route: single agent call, return result."""
+        from devteam.orchestrator.schemas import RoutePath, RoutingResult
         from devteam.orchestrator.workflows import execute_job
 
-        runtime_store.register_job(workflow_id="job-uuid", project_name="proj", repo_root="/tmp")
+        job = runtime_store.register_job(
+            workflow_id="job-uuid", project_name="proj", repo_root="/tmp"
+        )
+        mock_store = MagicMock(wraps=runtime_store)
+        mock_store.get_job_by_workflow_id = MagicMock(return_value=job)
 
         research_result = {"findings": "CI best practices report"}
 
@@ -362,22 +367,15 @@ class TestExecuteJob:
             patch(
                 "devteam.orchestrator.workflows.route_intake_step",
                 new_callable=AsyncMock,
-                return_value=MagicMock(path=MagicMock(value="research"), target_team=None),
-            ) as mock_route,
+                return_value=RoutingResult(path=RoutePath.RESEARCH, reasoning="Research request"),
+            ),
             patch(
                 "devteam.orchestrator.workflows.invoke_agent_step",
                 new_callable=AsyncMock,
                 return_value=research_result,
             ),
-            patch("devteam.orchestrator.bootstrap.get_runtime_store", return_value=runtime_store),
+            patch("devteam.orchestrator.bootstrap.get_runtime_store", return_value=mock_store),
         ):
-            # Make route_intake_step return a RoutePath.RESEARCH
-            from devteam.orchestrator.schemas import RoutePath, RoutingResult
-
-            mock_route.return_value = RoutingResult(
-                path=RoutePath.RESEARCH, reasoning="Research request"
-            )
-
             result = await execute_job(
                 spec="Research CI practices",
                 plan="",
