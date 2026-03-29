@@ -153,7 +153,11 @@ def register_job_commands_v2(app: typer.Typer) -> None:
                 finally:
                     DBOS.destroy()
 
-            asyncio.run(_send())
+            try:
+                asyncio.run(_send())
+            except Exception as e:
+                typer.echo(f"Error sending answer: {e}")
+                raise typer.Exit(code=1)
             store.resolve_question(question_ref)
             typer.echo(f"Answer sent for {question_ref}. Task will resume.")
         finally:
