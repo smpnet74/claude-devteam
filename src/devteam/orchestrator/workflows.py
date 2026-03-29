@@ -308,14 +308,20 @@ async def execute_job(
             dag.mark_running(td.id)
             peer = decomp.peer_assignments.get(td.id)
             em = "em_team_a" if td.team == "a" else "em_team_b"
-            result = await execute_task(
-                task=td.model_dump(),
-                job_alias=job_alias,
-                project_name=project_name,
-                repo_root=repo_root,
-                peer_reviewer=peer,
-                em_role=em,
-            )
+            try:
+                result = await execute_task(
+                    task=td.model_dump(),
+                    job_alias=job_alias,
+                    project_name=project_name,
+                    repo_root=repo_root,
+                    peer_reviewer=peer,
+                    em_role=em,
+                )
+            except Exception as e:
+                logger.error("Task %s failed with exception: %s", td.id, e)
+                dag.mark_failed(td.id, str(e))
+                task_results[td.id] = {"status": "error", "task_id": td.id, "error": str(e)}
+                continue
             task_results[td.id] = result
             if result.get("status") == "completed":
                 dag.mark_completed(td.id, result)

@@ -188,7 +188,11 @@ def register_job_commands_v2(app: typer.Typer) -> None:
             typer.echo(f"Resume failed: {e}")
             raise typer.Exit(code=1)
 
-        store = _get_store()
+        try:
+            store = _get_store()
+        except Exception as e:
+            typer.echo(f"Error reading runtime state: {e}")
+            raise typer.Exit(code=1)
         try:
             active = store.get_active_jobs()
             if target:
