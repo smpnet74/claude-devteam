@@ -33,7 +33,8 @@ include = ["src/devteam/**/*.py", "src/devteam/**/*.md"]
 testpaths = ["tests"]
 asyncio_mode = "auto"
 filterwarnings = [
-    "ignore:coroutine .* was never awaited:RuntimeWarning",
+    "ignore:coroutine '_run' was never awaited:RuntimeWarning",
+    "ignore:coroutine '_send' was never awaited:RuntimeWarning",
 ]
 
 [tool.pyright]

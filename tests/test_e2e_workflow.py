@@ -146,14 +146,14 @@ class TestCleanupFromArtifactRegistry:
     """Cleanup step reads artifact registry and dispatches to git cleanup."""
 
     @pytest.mark.asyncio
-    async def test_cleanup_reads_artifacts(
+    async def test_cleanup_dispatches_with_artifact_params(
         self, dbos_launch: Any, runtime_store: RuntimeStateStore
     ) -> None:
-        """cleanup_step reads artifacts from store and calls cleanup functions."""
+        """cleanup_step receives artifact params (branch, worktree_path) and dispatches correctly."""
         from devteam.git.cleanup import CleanupResult
         from devteam.orchestrator.runtime import cleanup_step
 
-        # Set up artifacts
+        # Set up artifacts in store — proves the registration path works
         runtime_store.register_job(workflow_id="p", project_name="p", repo_root="/r")
         runtime_store.register_task(
             alias="T-1", workflow_id="c1", job_alias="W-1", assigned_to="be"
@@ -161,6 +161,12 @@ class TestCleanupFromArtifactRegistry:
         runtime_store.register_artifact(
             task_alias="T-1", worktree_path="/wt/T-1", branch_name="devteam/auth/T-1"
         )
+
+        # Verify artifact was persisted correctly
+        art = runtime_store.get_artifact("T-1")
+        assert art is not None
+        assert art.branch_name == "devteam/auth/T-1"
+        assert art.worktree_path == "/wt/T-1"
 
         expected = CleanupResult(success=True)
 
@@ -170,20 +176,32 @@ class TestCleanupFromArtifactRegistry:
 
             @DBOS.workflow()
             async def _run() -> CleanupResult:
+                # Use the artifact's branch and worktree_path — proving the
+                # registration-to-cleanup pipeline works end-to-end
                 return await cleanup_step(
                     repo_root=Path("/r"),
-                    branch="devteam/auth/T-1",
+                    branch=art.branch_name,
                     mode="merge",
-                    worktree_path=Path("/wt/T-1"),
+                    worktree_path=Path(art.worktree_path),
                 )
 
             result = await _run()
             assert result.success
-            mock.assert_called_once()
+            mock.assert_called_once_with(
+                repo_root=Path("/r"),
+                branch="devteam/auth/T-1",
+                worktree_path=Path("/wt/T-1"),
+            )
 
 
 class TestQuestionFlow:
-    """Question flow: workflow raises question, answer unblocks it."""
+    """Question flow integration through execute_task.
+
+    Note: Agent calls, git ops, and DBOS events are mocked (they require
+    external services). The test verifies the RuntimeStateStore integration
+    — question registration, resolution, and status tracking — which uses
+    a real SQLite database.
+    """
 
     @pytest.mark.asyncio
     async def test_question_registered_and_resolved(

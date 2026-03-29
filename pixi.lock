@@ -516,7 +516,7 @@ packages:
 - pypi: ./
   name: claude-devteam
   version: 0.1.0
-  sha256: 5a7213a60409b906bb3e90f57a6bd88921664ad93249069099a52638674a3267
+  sha256: fa12460c4566787a7c0ba48af1210f09414fd44caf3626f1b39f1ad4b88a8bfd
   requires_dist:
   - dbos>=2.16,<3
   - fastapi>=0.135,<1
