@@ -145,7 +145,10 @@ def register_job_commands_v2(app: typer.Typer) -> None:
                 DBOS(config={"name": "devteam", "system_database_url": db_path})
                 DBOS.launch()
                 try:
-                    topic = f"answer:{q.task_alias}-Q{q.internal_id.split('-')[-1]}"
+                    # internal_id format: "Q-{task_alias}-{n}" e.g. "Q-T-1-1"
+                    # Extract question number from the end
+                    q_num = q.internal_id.rsplit("-", 1)[-1] if "-" in q.internal_id else "1"
+                    topic = f"answer:{q.task_alias}-Q{q_num}"
                     await DBOS.send_async(q.child_workflow_id, response, topic=topic)
                 finally:
                     DBOS.destroy()
@@ -171,6 +174,8 @@ def register_job_commands_v2(app: typer.Typer) -> None:
 
             DBOS(config={"name": "devteam", "system_database_url": db_path})
             DBOS.launch()
+            # Note: DBOS stays alive intentionally — it recovers and runs
+            # pending workflows in the background. destroy() is called on process exit.
             typer.echo("DBOS launched — recovering workflows...")
 
         try:
