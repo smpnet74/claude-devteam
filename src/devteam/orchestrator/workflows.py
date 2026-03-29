@@ -260,27 +260,35 @@ async def execute_job(
             job_alias=job_alias,
             assigned_to=role,
         )
-        task_result = await execute_task(
-            task=task.model_dump(),
-            job_alias=job_alias,
-            project_name=project_name,
-            repo_root=repo_root,
-        )
+        try:
+            task_result = await execute_task(
+                task=task.model_dump(),
+                job_alias=job_alias,
+                project_name=project_name,
+                repo_root=repo_root,
+            )
+        except Exception as e:
+            store.update_job_status(job_alias, "failed")
+            raise RuntimeError(f"Small fix task failed for job {job_alias}: {e}") from e
         final_status = "completed" if task_result.get("status") == "completed" else "failed"
         store.update_job_status(job_alias, final_status)
         return {"status": final_status, "route": "small_fix", "tasks": [task_result]}
 
     # FULL_PROJECT or OSS_CONTRIBUTION: decompose and execute DAG
-    decomp = await decompose_step(
-        spec=spec,
-        plan=plan,
-        routing=routing,
-        project_name=project_name,
-        worktree_path=repo_root,
-    )
+    try:
+        decomp = await decompose_step(
+            spec=spec,
+            plan=plan,
+            routing=routing,
+            project_name=project_name,
+            worktree_path=repo_root,
+        )
 
-    # Validate DAG before persisting tasks (rejects cycles and unknown deps)
-    dag = build_dag(decomp)
+        # Validate DAG before persisting tasks (rejects cycles and unknown deps)
+        dag = build_dag(decomp)
+    except Exception as e:
+        store.update_job_status(job_alias, "failed")
+        raise RuntimeError(f"Decomposition/DAG validation failed for job {job_alias}: {e}") from e
 
     # Register all tasks in runtime state (only after validation passes)
     for td in decomp.tasks:
