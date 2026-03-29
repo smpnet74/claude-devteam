@@ -67,6 +67,7 @@ class TestLoadAndMergeConfig:
             project_path=project_toml,
         )
         assert config is not None
+        assert config.approval.commit == "auto"
 
 
 class TestSingleJobEnforcement:

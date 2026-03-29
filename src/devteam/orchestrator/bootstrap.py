@@ -94,8 +94,8 @@ async def try_connect_knowledge(
         store = KnowledgeStore(url)
         await store.connect(username=username, password=password)
         return store
-    except Exception:
-        logger.warning("Knowledge store unavailable — proceeding without knowledge")
+    except Exception as e:
+        logger.warning("Knowledge store unavailable — proceeding without knowledge: %s", e)
         return None
 
 
@@ -103,8 +103,8 @@ def try_create_embedder(config: KnowledgeConfig) -> OllamaEmbedder | None:
     """Try to create an Ollama embedder. Returns None on failure."""
     try:
         return create_embedder_from_config(config)
-    except Exception:
-        logger.warning("Ollama unavailable — proceeding without embeddings")
+    except Exception as e:
+        logger.warning("Ollama unavailable — proceeding without embeddings: %s", e)
         return None
 
 
@@ -185,11 +185,16 @@ async def bootstrap(
         repo_root=repo_root,
     )
 
-    # Register in runtime state (durable alias)
-    job_record = _runtime_store.register_job(
-        workflow_id=handle.workflow_id,
-        project_name=project_name,
-        repo_root=repo_root,
-    )
+    # Register in runtime state (durable alias).
+    # If registration fails, the workflow is already running but untracked.
+    try:
+        job_record = _runtime_store.register_job(
+            workflow_id=handle.workflow_id,
+            project_name=project_name,
+            repo_root=repo_root,
+        )
+    except Exception as e:
+        logger.error("Failed to register job for workflow %s: %s", handle.workflow_id, e)
+        raise
 
     return handle, job_record.alias
