@@ -339,3 +339,172 @@ class TestExecuteTask:
 
         assert result["status"] == "max_revisions_exceeded"
         assert result["revisions"] == 3
+
+
+# ---------------------------------------------------------------------------
+# TestExecuteJob
+# ---------------------------------------------------------------------------
+
+
+class TestExecuteJob:
+    """Tests for execute_job parent workflow."""
+
+    @pytest.mark.asyncio
+    async def test_research_path(self, dbos_launch: Any, runtime_store: RuntimeStateStore) -> None:
+        """Research route: single agent call, return result."""
+        from devteam.orchestrator.workflows import execute_job
+
+        runtime_store.register_job(workflow_id="job-uuid", project_name="proj", repo_root="/tmp")
+
+        research_result = {"findings": "CI best practices report"}
+
+        with (
+            patch(
+                "devteam.orchestrator.workflows.route_intake_step",
+                new_callable=AsyncMock,
+                return_value=MagicMock(path=MagicMock(value="research"), target_team=None),
+            ) as mock_route,
+            patch(
+                "devteam.orchestrator.workflows.invoke_agent_step",
+                new_callable=AsyncMock,
+                return_value=research_result,
+            ),
+            patch("devteam.orchestrator.bootstrap.get_runtime_store", return_value=runtime_store),
+        ):
+            # Make route_intake_step return a RoutePath.RESEARCH
+            from devteam.orchestrator.schemas import RoutePath, RoutingResult
+
+            mock_route.return_value = RoutingResult(
+                path=RoutePath.RESEARCH, reasoning="Research request"
+            )
+
+            result = await execute_job(
+                spec="Research CI practices",
+                plan="",
+                project_name="proj",
+                repo_root="/tmp/repo",
+            )
+
+        assert result["status"] == "completed"
+        assert result["route"] == "research"
+
+    @pytest.mark.asyncio
+    async def test_small_fix_path(self, dbos_launch: Any, runtime_store: RuntimeStateStore) -> None:
+        """Small fix route: single task, no decomposition."""
+        from devteam.orchestrator.schemas import RoutePath, RoutingResult
+        from devteam.orchestrator.workflows import execute_job
+
+        runtime_store.register_job(workflow_id="job-uuid", project_name="proj", repo_root="/tmp")
+
+        task_result = {
+            "status": "completed",
+            "task_id": "T-1",
+            "revisions": 1,
+            "pr_number": 1,
+            "pr_url": "url",
+        }
+
+        with (
+            patch(
+                "devteam.orchestrator.workflows.route_intake_step",
+                new_callable=AsyncMock,
+                return_value=RoutingResult(
+                    path=RoutePath.SMALL_FIX, reasoning="Small fix", target_team="a"
+                ),
+            ),
+            patch(
+                "devteam.orchestrator.workflows.execute_task",
+                new_callable=AsyncMock,
+                return_value=task_result,
+            ),
+            patch("devteam.orchestrator.bootstrap.get_runtime_store", return_value=runtime_store),
+        ):
+            result = await execute_job(
+                spec="Fix typo in readme",
+                plan="",
+                project_name="proj",
+                repo_root="/tmp/repo",
+            )
+
+        assert result["status"] == "completed"
+        assert result["route"] == "small_fix"
+        assert len(result["tasks"]) == 1
+
+    @pytest.mark.asyncio
+    async def test_full_project_path(
+        self, dbos_launch: Any, runtime_store: RuntimeStateStore
+    ) -> None:
+        """Full project: decompose → DAG → post-PR review."""
+        from devteam.orchestrator.schemas import RoutePath, RoutingResult
+        from devteam.orchestrator.workflows import execute_job
+
+        runtime_store.register_job(workflow_id="job-uuid", project_name="proj", repo_root="/tmp")
+
+        task_result = {
+            "status": "completed",
+            "task_id": "T-1",
+            "revisions": 1,
+            "pr_number": 42,
+            "pr_url": "url",
+        }
+
+        decomp_result = MagicMock()
+        decomp_result.tasks = [
+            MagicMock(
+                id="T-1",
+                assigned_to="backend_engineer",
+                team="a",
+                depends_on=[],
+                pr_group="auth",
+                work_type="code",
+            )
+        ]
+        decomp_result.tasks[0].model_dump.return_value = _make_task_dict()
+        decomp_result.peer_assignments = {"T-1": "frontend_engineer"}
+
+        with (
+            patch(
+                "devteam.orchestrator.workflows.route_intake_step",
+                new_callable=AsyncMock,
+                return_value=RoutingResult(
+                    path=RoutePath.FULL_PROJECT,
+                    reasoning="Spec and plan provided",
+                ),
+            ),
+            patch(
+                "devteam.orchestrator.workflows.decompose_step",
+                new_callable=AsyncMock,
+                return_value=decomp_result,
+            ),
+            patch(
+                "devteam.orchestrator.workflows.build_dag",
+            ) as mock_build_dag,
+            patch(
+                "devteam.orchestrator.workflows.execute_task",
+                new_callable=AsyncMock,
+                return_value=task_result,
+            ),
+            patch(
+                "devteam.orchestrator.workflows.post_pr_review_step",
+                new_callable=AsyncMock,
+            ),
+            patch("devteam.orchestrator.bootstrap.get_runtime_store", return_value=runtime_store),
+        ):
+            # Set up DAG mock
+            from devteam.orchestrator.dag import DAGState, TaskNode
+
+            dag = DAGState()
+            dag.nodes["T-1"] = TaskNode(task=decomp_result.tasks[0])
+            dag.dependency_graph["T-1"] = []
+            mock_build_dag.return_value = dag
+
+            result = await execute_job(
+                spec="Build auth system",
+                plan="Step 1: API",
+                project_name="proj",
+                repo_root="/tmp/repo",
+            )
+
+        assert result["status"] == "completed"
+        assert result["route"] == "full_project"
+        assert len(result["tasks"]) == 1
