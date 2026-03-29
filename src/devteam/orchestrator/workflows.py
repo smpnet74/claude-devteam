@@ -7,6 +7,7 @@ execute_job: Parent workflow — route → decompose → DAG → post-PR review 
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 from typing import Any
 
 from dbos import DBOS
@@ -51,10 +52,10 @@ async def execute_task(
     """
     td = TaskDecomposition.model_validate(task)
 
-    # Create worktree
+    # Create worktree (repo_root is str for DBOS serialization, convert to Path)
     branch = f"devteam/{td.pr_group}/{td.id}".replace(" ", "-")
     wt_info = await create_worktree_step(
-        repo_root=repo_root,
+        repo_root=Path(repo_root),
         branch=branch,
     )
     worktree_path = str(wt_info.path)
@@ -63,6 +64,10 @@ async def execute_task(
     from devteam.orchestrator.bootstrap import get_runtime_store
 
     store = get_runtime_store()
+
+    # Update task status to running
+    store.update_task_status(td.id, "running")
+
     store.register_artifact(
         task_alias=td.id,
         worktree_path=worktree_path,
@@ -70,6 +75,7 @@ async def execute_task(
     )
 
     # Revision loop
+    # TODO(Task 6): Add pause/cancel checks via DBOS.recv(topic="control:pause", timeout_seconds=0)
     question_count = 0
     for revision in range(MAX_REVISIONS):
         # Engineer implementation
@@ -142,6 +148,7 @@ async def execute_task(
             branch=branch,
         )
 
+        store.update_task_status(td.id, "completed")
         return {
             "status": "completed",
             "task_id": td.id,
@@ -151,6 +158,7 @@ async def execute_task(
         }
 
     # Exhausted revisions
+    store.update_task_status(td.id, "failed")
     return {
         "status": "max_revisions_exceeded",
         "task_id": td.id,

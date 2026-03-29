@@ -171,6 +171,8 @@ async def bootstrap(
     set_config(config.model_dump())
 
     # Start workflow
+    # Note: config is available to the workflow via set_config() singleton, not as a param.
+    # DBOS workflow args must be JSON-serializable; DevteamConfig is not.
     from devteam.orchestrator.workflows import execute_job
 
     repo_root = str(Path.cwd())
