@@ -225,6 +225,9 @@ async def execute_job(
             worktree_path=repo_root,
             project_name=project_name,
         )
+        job_record = store.get_job_by_workflow_id(DBOS.workflow_id or "")
+        if job_record:
+            store.update_job_status(job_record.alias, "completed")
         return {"status": "completed", "route": "research", "result": result}
 
     if routing.path == RoutePath.SMALL_FIX:
@@ -240,20 +243,21 @@ async def execute_job(
             pr_group="fix/small-fix",
             work_type=WorkType.CODE,
         )
+        job_record = store.get_job_by_workflow_id(DBOS.workflow_id or "")
+        job_alias = job_record.alias if job_record else "W-1"
         store.register_task(
             alias="T-1",
             workflow_id=f"{DBOS.workflow_id or 'unknown'}-T-1",
-            job_alias=store.get_job_by_workflow_id(DBOS.workflow_id or "").alias
-            if store.get_job_by_workflow_id(DBOS.workflow_id or "")
-            else "W-1",
+            job_alias=job_alias,
             assigned_to=role,
         )
         task_result = await execute_task(
             task=task.model_dump(),
-            job_alias="W-1",
+            job_alias=job_alias,
             project_name=project_name,
             repo_root=repo_root,
         )
+        store.update_job_status(job_alias, "completed")
         return {"status": "completed", "route": "small_fix", "tasks": [task_result]}
 
     # FULL_PROJECT or OSS_CONTRIBUTION: decompose and execute DAG
@@ -316,9 +320,14 @@ async def execute_job(
             worktree_path=repo_root,
         )
 
+    # TODO(Task 12): Add cleanup_step call to clean up worktrees/branches on completion
+    # TODO: Parallelize DAG execution via DBOS.start_workflow_async for concurrent task tiers
+
     all_succeeded = all(r.get("status") == "completed" for r in task_results.values())
+    final_status = "completed" if all_succeeded else "partial"
+    store.update_job_status(job_alias, final_status)
     return {
-        "status": "completed" if all_succeeded else "partial",
+        "status": final_status,
         "route": routing.path.value,
         "tasks": list(task_results.values()),
     }
