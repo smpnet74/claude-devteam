@@ -8,19 +8,26 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal, cast
 
 from dbos import DBOS
 
+from devteam.orchestrator.dag import build_dag
+from devteam.orchestrator.routing import IntakeContext
 from devteam.orchestrator.runtime import (
     create_pr_step,
     create_worktree_step,
+    decompose_step,
     invoke_agent_step,
+    post_pr_review_step,
+    route_intake_step,
 )
 from devteam.orchestrator.schemas import (
     ImplementationResult,
     ReviewResult,
+    RoutePath,
     TaskDecomposition,
+    WorkType,
 )
 
 logger = logging.getLogger(__name__)
@@ -197,6 +204,158 @@ async def execute_job(
 ) -> dict[str, Any]:
     """Execute a full job: route → decompose → DAG → post-PR review.
 
-    Placeholder — will be fully implemented in Task 6.
+    Routes:
+    - FULL_PROJECT / OSS_CONTRIBUTION: decompose → DAG → post-PR review
+    - RESEARCH: single agent call, return result
+    - SMALL_FIX: single task, no decomposition
     """
-    return {"status": "not_implemented", "message": "execute_job is a Task 6 deliverable"}
+    from devteam.orchestrator.bootstrap import get_runtime_store  # lazy: circular dep
+
+    store = get_runtime_store()
+
+    # Step 1: Route intake
+    ctx = IntakeContext(spec=spec, plan=plan)
+    routing = await route_intake_step(ctx, project_name=project_name, worktree_path=repo_root)
+
+    # Step 2: Handle by route type
+    # Resolve job alias early — all routes need it
+    job_record = store.get_job_by_workflow_id(DBOS.workflow_id or "")
+    if not job_record:
+        raise RuntimeError(f"No job record for workflow {DBOS.workflow_id}")
+    job_alias = job_record.alias
+
+    if routing.path == RoutePath.RESEARCH:
+        try:
+            result = await invoke_agent_step(
+                role="chief_architect",
+                prompt=f"Research request:\n\n{spec or plan or ''}",
+                worktree_path=repo_root,
+                project_name=project_name,
+            )
+            store.update_job_status(job_alias, "completed")
+            return {"status": "completed", "route": "research", "result": result}
+        except Exception as e:
+            store.update_job_status(job_alias, "failed")
+            raise RuntimeError(f"Research route failed for job {job_alias}: {e}") from e
+
+    if routing.path == RoutePath.SMALL_FIX:
+        # Single task — no decomposition needed
+        raw_team = routing.target_team or "a"
+        if raw_team not in ("a", "b"):
+            raise ValueError(f"Unsupported target_team: {raw_team!r}")
+        target_team = cast(Literal["a", "b"], raw_team)
+        role = "backend_engineer" if target_team == "a" else "data_engineer"
+        task = TaskDecomposition(
+            id="T-1",
+            assigned_to=role,
+            description=spec or plan or "Small fix",
+            depends_on=[],
+            team=target_team,
+            pr_group="fix/small-fix",
+            work_type=WorkType.CODE,
+        )
+        store.register_task(
+            alias="T-1",
+            workflow_id=f"{DBOS.workflow_id or 'unknown'}-T-1",
+            job_alias=job_alias,
+            assigned_to=role,
+        )
+        try:
+            task_result = await execute_task(
+                task=task.model_dump(),
+                job_alias=job_alias,
+                project_name=project_name,
+                repo_root=repo_root,
+            )
+        except Exception as e:
+            store.update_job_status(job_alias, "failed")
+            raise RuntimeError(f"Small fix task failed for job {job_alias}: {e}") from e
+        final_status = "completed" if task_result.get("status") == "completed" else "failed"
+        store.update_job_status(job_alias, final_status)
+        return {"status": final_status, "route": "small_fix", "tasks": [task_result]}
+
+    # FULL_PROJECT or OSS_CONTRIBUTION: decompose and execute DAG
+    try:
+        decomp = await decompose_step(
+            spec=spec,
+            plan=plan,
+            routing=routing,
+            project_name=project_name,
+            worktree_path=repo_root,
+        )
+
+        # Validate DAG before persisting tasks (rejects cycles and unknown deps)
+        dag = build_dag(decomp)
+    except Exception as e:
+        store.update_job_status(job_alias, "failed")
+        raise RuntimeError(f"Decomposition/DAG validation failed for job {job_alias}: {e}") from e
+
+    # Register all tasks in runtime state (only after validation passes)
+    for td in decomp.tasks:
+        store.register_task(
+            alias=td.id,
+            workflow_id=f"{DBOS.workflow_id or 'unknown'}-{td.id}",
+            job_alias=job_alias,
+            assigned_to=td.assigned_to,
+        )
+
+    # Execute DAG (already validated above)
+    task_results: dict[str, dict[str, Any]] = {}
+
+    while dag.has_pending or dag.has_running:
+        ready = dag.get_ready_tasks()
+        for td in ready:
+            dag.mark_running(td.id)
+            peer = decomp.peer_assignments.get(td.id)
+            em = "em_team_a" if td.team == "a" else "em_team_b"
+            try:
+                result = await execute_task(
+                    task=td.model_dump(),
+                    job_alias=job_alias,
+                    project_name=project_name,
+                    repo_root=repo_root,
+                    peer_reviewer=peer,
+                    em_role=em,
+                )
+            except Exception as e:
+                logger.error("Task %s failed with exception: %s", td.id, e)
+                dag.mark_failed(td.id, str(e))
+                task_results[td.id] = {"status": "error", "task_id": td.id, "error": str(e)}
+                continue
+            task_results[td.id] = result
+            if result.get("status") == "completed":
+                dag.mark_completed(td.id, result)
+            else:
+                dag.mark_failed(td.id, result.get("status", "unknown"))
+
+        if not dag.has_running and not dag.get_ready_tasks():
+            break
+
+    # Post-PR review for completed tasks
+    # TODO: Use per-task work_type instead of hardcoded WorkType.CODE
+    completed_tasks = [r for r in task_results.values() if r.get("status") == "completed"]
+    if completed_tasks:
+        pr_context = "\n".join(
+            f"- [{r['task_id']}] PR #{r.get('pr_number', '?')}" for r in completed_tasks
+        )
+        try:
+            await post_pr_review_step(
+                work_type=WorkType.CODE,
+                pr_context=pr_context,
+                project_name=project_name,
+                worktree_path=repo_root,
+            )
+        except Exception as e:
+            logger.error("Post-PR review failed: %s", e)
+
+    # TODO(Task 12): Add cleanup_step call to clean up worktrees/branches on completion
+    # TODO: Parallelize DAG execution via DBOS.start_workflow_async for concurrent task tiers
+
+    all_succeeded = all(r.get("status") == "completed" for r in task_results.values())
+    final_status = "completed" if all_succeeded else "partial"
+    store.update_job_status(job_alias, final_status)
+    return {
+        "status": final_status,
+        "route": routing.path.value,
+        "tasks": list(task_results.values()),
+    }
