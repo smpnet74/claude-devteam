@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 from dbos import DBOS
 
@@ -243,7 +243,7 @@ async def execute_job(
         raw_team = routing.target_team or "a"
         if raw_team not in ("a", "b"):
             raise ValueError(f"Unsupported target_team: {raw_team!r}")
-        target_team: Literal["a", "b"] = raw_team  # type: ignore[assignment]
+        target_team = cast(Literal["a", "b"], raw_team)
         role = "backend_engineer" if target_team == "a" else "data_engineer"
         task = TaskDecomposition(
             id="T-1",

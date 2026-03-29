@@ -69,11 +69,12 @@ def parse_command(raw: str) -> ParsedCommand | None:
         if min_args >= 2:
             # First token is the target, rest is the text
             arg_parts = remaining.split(None, 1)
-            args = arg_parts
+            args = arg_parts if arg_parts else []
         elif min_args == 1:
-            args = [remaining.split()[0]]
+            tokens = remaining.split()
+            args = [tokens[0]] if tokens else []
         else:
-            args = remaining.split() if remaining else []
+            args = remaining.split() if remaining.strip() else []
     else:
         args = []
 

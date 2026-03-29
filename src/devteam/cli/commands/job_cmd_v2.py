@@ -175,7 +175,12 @@ def register_job_commands_v2(app: typer.Typer) -> None:
 
         try:
             asyncio.run(_resume())
-            store = _get_store()
+        except Exception as e:
+            typer.echo(f"Resume failed: {e}")
+            raise typer.Exit(code=1)
+
+        store = _get_store()
+        try:
             active = store.get_active_jobs()
             if target:
                 job = store.get_job(target)
@@ -188,7 +193,5 @@ def register_job_commands_v2(app: typer.Typer) -> None:
                     typer.echo(f"  {j.alias}: {j.status}")
             else:
                 typer.echo("No active jobs to resume.")
+        finally:
             store.close()
-        except Exception as e:
-            typer.echo(f"Resume failed: {e}")
-            raise typer.Exit(code=1)
