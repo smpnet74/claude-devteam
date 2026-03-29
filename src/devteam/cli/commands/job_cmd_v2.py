@@ -37,30 +37,30 @@ def register_job_commands_v2(app: typer.Typer) -> None:
             typer.echo("Provide --spec/--plan or --prompt to start a job.")
             raise typer.Exit(code=1)
 
-        # Read file contents if paths provided
-        spec_content = ""
-        plan_content = ""
-        if spec:
-            spec_path = Path(spec)
-            if spec_path.exists():
-                spec_content = spec_path.read_text()
-            else:
-                spec_content = spec
-        if plan:
-            plan_path = Path(plan)
-            if plan_path.exists():
-                plan_content = plan_path.read_text()
-            else:
-                plan_content = plan
-        if prompt:
-            spec_content = prompt
-
-        async def _run() -> tuple:
-            from devteam.orchestrator.bootstrap import bootstrap
-
-            return await bootstrap(spec=spec_content, plan=plan_content)
-
         try:
+            # Read file contents if paths provided
+            spec_content = ""
+            plan_content = ""
+            if spec:
+                spec_path = Path(spec)
+                if spec_path.exists():
+                    spec_content = spec_path.read_text()
+                else:
+                    spec_content = spec
+            if plan:
+                plan_path = Path(plan)
+                if plan_path.exists():
+                    plan_content = plan_path.read_text()
+                else:
+                    plan_content = plan
+            if prompt:
+                spec_content = prompt
+
+            async def _run() -> tuple:
+                from devteam.orchestrator.bootstrap import bootstrap
+
+                return await bootstrap(spec=spec_content, plan=plan_content)
+
             handle, alias = asyncio.run(_run())
             typer.echo(f"Job {alias} started (workflow: {handle.workflow_id}).")
             typer.echo("Use 'devteam status' to monitor progress.")
