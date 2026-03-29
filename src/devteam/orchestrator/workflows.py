@@ -259,8 +259,9 @@ async def execute_job(
             project_name=project_name,
             repo_root=repo_root,
         )
-        store.update_job_status(job_alias, "completed")
-        return {"status": "completed", "route": "small_fix", "tasks": [task_result]}
+        final_status = "completed" if task_result.get("status") == "completed" else "failed"
+        store.update_job_status(job_alias, final_status)
+        return {"status": final_status, "route": "small_fix", "tasks": [task_result]}
 
     # FULL_PROJECT or OSS_CONTRIBUTION: decompose and execute DAG
     decomp = await decompose_step(
@@ -312,6 +313,7 @@ async def execute_job(
             break
 
     # Post-PR review for completed tasks
+    # TODO: Use per-task work_type instead of hardcoded WorkType.CODE
     completed_tasks = [r for r in task_results.values() if r.get("status") == "completed"]
     if completed_tasks:
         pr_context = "\n".join(
