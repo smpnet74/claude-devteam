@@ -11,9 +11,7 @@ from devteam.concurrency.approval import (
     load_approval_gates,
 )
 from devteam.concurrency.cli_priority import (
-    PrioritizeResult,
     parse_priority_flag,
-    prioritize_task,
 )
 from devteam.concurrency.config import (
     ConcurrencyConfig,
@@ -32,9 +30,7 @@ __all__ = [
     "check_approval",
     "load_approval_gates",
     # cli_priority
-    "PrioritizeResult",
     "parse_priority_flag",
-    "prioritize_task",
     # config
     "ConcurrencyConfig",
     "load_concurrency_config",
