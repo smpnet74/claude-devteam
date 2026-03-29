@@ -39,7 +39,8 @@ _runtime_store: RuntimeStateStore | None = None
 
 def get_runtime_store() -> RuntimeStateStore:
     """Get the global RuntimeStateStore. Raises if not initialized."""
-    assert _runtime_store is not None, "Runtime store not initialized"
+    if _runtime_store is None:
+        raise RuntimeError("Runtime store not initialized")
     return _runtime_store
 
 
@@ -159,7 +160,7 @@ async def bootstrap(
     )
 
     # Embedder (graceful degradation)
-    try_create_embedder(config.knowledge)  # warm check; embedder used later via knowledge store
+    _ = try_create_embedder(config.knowledge)  # warm check; embedder used later via knowledge store
 
     # Agent registry + invoker
     registry = AgentRegistry.load(get_bundled_templates_dir())

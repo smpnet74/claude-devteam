@@ -24,7 +24,7 @@ class TestGetRuntimeStore:
         original = bootstrap._runtime_store
         bootstrap._runtime_store = None
         try:
-            with pytest.raises(AssertionError, match="not initialized"):
+            with pytest.raises(RuntimeError, match="not initialized"):
                 bootstrap.get_runtime_store()
         finally:
             bootstrap._runtime_store = original

@@ -77,14 +77,26 @@ async def execute_task(
     # Revision loop
     # TODO(Task 6): Add pause/cancel checks via DBOS.recv(topic="control:pause", timeout_seconds=0)
     question_count = 0
+    previous_answers: list[str] = []
     for revision in range(MAX_REVISIONS):
+        # Build prompt with any prior Q&A context
+        base_prompt = f"Implement task {td.id}: {td.description}"
+        if previous_answers:
+            qa_context = "\n".join(f"- Q&A: {a}" for a in previous_answers)
+            base_prompt = f"{base_prompt}\n\nPrevious clarifications:\n{qa_context}"
+
         # Engineer implementation
-        impl_raw = await invoke_agent_step(
-            role=td.assigned_to,
-            prompt=f"Implement task {td.id}: {td.description}",
-            worktree_path=worktree_path,
-            project_name=project_name,
-        )
+        try:
+            impl_raw = await invoke_agent_step(
+                role=td.assigned_to,
+                prompt=base_prompt,
+                worktree_path=worktree_path,
+                project_name=project_name,
+            )
+        except Exception as e:
+            raise RuntimeError(
+                f"Agent invocation failed for task {td.id} (role={td.assigned_to}): {e}"
+            ) from e
         impl = ImplementationResult.model_validate(impl_raw)
 
         # Handle questions
@@ -108,6 +120,16 @@ async def execute_task(
 
             if answer:
                 store.resolve_question(display)
+                previous_answers.append(f"{question_text} → {answer}")
+            else:
+                # Timeout — mark task as blocked and exit
+                store.update_task_status(td.id, "blocked")
+                return {
+                    "status": "blocked",
+                    "task_id": td.id,
+                    "revisions": revision + 1,
+                    "reason": f"Question {display} timed out without answer",
+                }
             continue
 
         if impl.status != "completed":
