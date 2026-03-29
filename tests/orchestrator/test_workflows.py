@@ -394,7 +394,9 @@ class TestExecuteJob:
         from devteam.orchestrator.schemas import RoutePath, RoutingResult
         from devteam.orchestrator.workflows import execute_job
 
-        runtime_store.register_job(workflow_id="job-uuid", project_name="proj", repo_root="/tmp")
+        job = runtime_store.register_job(
+            workflow_id="job-uuid", project_name="proj", repo_root="/tmp"
+        )
 
         task_result = {
             "status": "completed",
@@ -403,6 +405,10 @@ class TestExecuteJob:
             "pr_number": 1,
             "pr_url": "url",
         }
+
+        # Wrap store so get_job_by_workflow_id returns the job regardless of DBOS's UUID
+        mock_store = MagicMock(wraps=runtime_store)
+        mock_store.get_job_by_workflow_id = MagicMock(return_value=job)
 
         with (
             patch(
@@ -417,7 +423,7 @@ class TestExecuteJob:
                 new_callable=AsyncMock,
                 return_value=task_result,
             ),
-            patch("devteam.orchestrator.bootstrap.get_runtime_store", return_value=runtime_store),
+            patch("devteam.orchestrator.bootstrap.get_runtime_store", return_value=mock_store),
         ):
             result = await execute_job(
                 spec="Fix typo in readme",
@@ -438,7 +444,9 @@ class TestExecuteJob:
         from devteam.orchestrator.schemas import RoutePath, RoutingResult
         from devteam.orchestrator.workflows import execute_job
 
-        runtime_store.register_job(workflow_id="job-uuid", project_name="proj", repo_root="/tmp")
+        job = runtime_store.register_job(
+            workflow_id="job-uuid", project_name="proj", repo_root="/tmp"
+        )
 
         task_result = {
             "status": "completed",
@@ -461,6 +469,9 @@ class TestExecuteJob:
         ]
         decomp_result.tasks[0].model_dump.return_value = _make_task_dict()
         decomp_result.peer_assignments = {"T-1": "frontend_engineer"}
+
+        mock_store = MagicMock(wraps=runtime_store)
+        mock_store.get_job_by_workflow_id = MagicMock(return_value=job)
 
         with (
             patch(
@@ -488,7 +499,7 @@ class TestExecuteJob:
                 "devteam.orchestrator.workflows.post_pr_review_step",
                 new_callable=AsyncMock,
             ),
-            patch("devteam.orchestrator.bootstrap.get_runtime_store", return_value=runtime_store),
+            patch("devteam.orchestrator.bootstrap.get_runtime_store", return_value=mock_store),
         ):
             # Set up DAG mock
             from devteam.orchestrator.dag import DAGState, TaskNode

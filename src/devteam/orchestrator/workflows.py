@@ -244,7 +244,9 @@ async def execute_job(
             work_type=WorkType.CODE,
         )
         job_record = store.get_job_by_workflow_id(DBOS.workflow_id or "")
-        job_alias = job_record.alias if job_record else "W-1"
+        if not job_record:
+            raise RuntimeError(f"No job record for workflow {DBOS.workflow_id}")
+        job_alias = job_record.alias
         store.register_task(
             alias="T-1",
             workflow_id=f"{DBOS.workflow_id or 'unknown'}-T-1",
@@ -271,7 +273,9 @@ async def execute_job(
 
     # Register all tasks in runtime state
     job_record = store.get_job_by_workflow_id(DBOS.workflow_id or "")
-    job_alias = job_record.alias if job_record else "W-1"
+    if not job_record:
+        raise RuntimeError(f"No job record for workflow {DBOS.workflow_id}")
+    job_alias = job_record.alias
     for td in decomp.tasks:
         store.register_task(
             alias=td.id,
@@ -313,12 +317,15 @@ async def execute_job(
         pr_context = "\n".join(
             f"- [{r['task_id']}] PR #{r.get('pr_number', '?')}" for r in completed_tasks
         )
-        await post_pr_review_step(
-            work_type=WorkType.CODE,
-            pr_context=pr_context,
-            project_name=project_name,
-            worktree_path=repo_root,
-        )
+        try:
+            await post_pr_review_step(
+                work_type=WorkType.CODE,
+                pr_context=pr_context,
+                project_name=project_name,
+                worktree_path=repo_root,
+            )
+        except Exception as e:
+            logger.error("Post-PR review failed: %s", e)
 
     # TODO(Task 12): Add cleanup_step call to clean up worktrees/branches on completion
     # TODO: Parallelize DAG execution via DBOS.start_workflow_async for concurrent task tiers

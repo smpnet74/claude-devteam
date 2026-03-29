@@ -19,6 +19,7 @@ logger_app = typer.Typer()
 def _get_store() -> RuntimeStateStore:
     """Get or create RuntimeStateStore for read-only CLI commands."""
     db_path = Path.home() / ".devteam" / "runtime.sqlite"
+    db_path.parent.mkdir(parents=True, exist_ok=True)
     return RuntimeStateStore(str(db_path))
 
 
@@ -63,7 +64,7 @@ def register_job_commands_v2(app: typer.Typer) -> None:
             handle, alias = asyncio.run(_run())
             typer.echo(f"Job {alias} started (workflow: {handle.workflow_id}).")
             typer.echo("Use 'devteam status' to monitor progress.")
-        except RuntimeError as e:
+        except Exception as e:
             typer.echo(f"Error: {e}")
             raise typer.Exit(code=1)
 
@@ -129,10 +130,15 @@ def register_job_commands_v2(app: typer.Typer) -> None:
             async def _send() -> None:
                 from dbos import DBOS
 
-                # The workflow is waiting on topic "answer:{task_alias}-Q{n}"
-                # Extract Q number from internal_id (e.g., "Q-T-1-1" → 1)
-                topic = f"answer:{q.task_alias}-Q{q.internal_id.split('-')[-1]}"
-                await DBOS.send_async(q.child_workflow_id, response, topic=topic)
+                devteam_dir = Path.home() / ".devteam"
+                db_path = f"sqlite:///{devteam_dir / 'devteam_system.sqlite'}"
+                DBOS(config={"name": "devteam", "system_database_url": db_path})
+                DBOS.launch()
+                try:
+                    topic = f"answer:{q.task_alias}-Q{q.internal_id.split('-')[-1]}"
+                    await DBOS.send_async(q.child_workflow_id, response, topic=topic)
+                finally:
+                    DBOS.destroy()
 
             asyncio.run(_send())
             store.resolve_question(question_ref)
