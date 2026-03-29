@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 from dbos import DBOS
 
@@ -243,7 +243,7 @@ async def execute_job(
         raw_team = routing.target_team or "a"
         if raw_team not in ("a", "b"):
             raise ValueError(f"Unsupported target_team: {raw_team!r}")
-        target_team: Literal["a", "b"] = raw_team  # type: ignore[assignment]
+        target_team = cast(Literal["a", "b"], raw_team)
         role = "backend_engineer" if target_team == "a" else "data_engineer"
         task = TaskDecomposition(
             id="T-1",
@@ -260,27 +260,35 @@ async def execute_job(
             job_alias=job_alias,
             assigned_to=role,
         )
-        task_result = await execute_task(
-            task=task.model_dump(),
-            job_alias=job_alias,
-            project_name=project_name,
-            repo_root=repo_root,
-        )
+        try:
+            task_result = await execute_task(
+                task=task.model_dump(),
+                job_alias=job_alias,
+                project_name=project_name,
+                repo_root=repo_root,
+            )
+        except Exception as e:
+            store.update_job_status(job_alias, "failed")
+            raise RuntimeError(f"Small fix task failed for job {job_alias}: {e}") from e
         final_status = "completed" if task_result.get("status") == "completed" else "failed"
         store.update_job_status(job_alias, final_status)
         return {"status": final_status, "route": "small_fix", "tasks": [task_result]}
 
     # FULL_PROJECT or OSS_CONTRIBUTION: decompose and execute DAG
-    decomp = await decompose_step(
-        spec=spec,
-        plan=plan,
-        routing=routing,
-        project_name=project_name,
-        worktree_path=repo_root,
-    )
+    try:
+        decomp = await decompose_step(
+            spec=spec,
+            plan=plan,
+            routing=routing,
+            project_name=project_name,
+            worktree_path=repo_root,
+        )
 
-    # Validate DAG before persisting tasks (rejects cycles and unknown deps)
-    dag = build_dag(decomp)
+        # Validate DAG before persisting tasks (rejects cycles and unknown deps)
+        dag = build_dag(decomp)
+    except Exception as e:
+        store.update_job_status(job_alias, "failed")
+        raise RuntimeError(f"Decomposition/DAG validation failed for job {job_alias}: {e}") from e
 
     # Register all tasks in runtime state (only after validation passes)
     for td in decomp.tasks:
@@ -300,14 +308,20 @@ async def execute_job(
             dag.mark_running(td.id)
             peer = decomp.peer_assignments.get(td.id)
             em = "em_team_a" if td.team == "a" else "em_team_b"
-            result = await execute_task(
-                task=td.model_dump(),
-                job_alias=job_alias,
-                project_name=project_name,
-                repo_root=repo_root,
-                peer_reviewer=peer,
-                em_role=em,
-            )
+            try:
+                result = await execute_task(
+                    task=td.model_dump(),
+                    job_alias=job_alias,
+                    project_name=project_name,
+                    repo_root=repo_root,
+                    peer_reviewer=peer,
+                    em_role=em,
+                )
+            except Exception as e:
+                logger.error("Task %s failed with exception: %s", td.id, e)
+                dag.mark_failed(td.id, str(e))
+                task_results[td.id] = {"status": "error", "task_id": td.id, "error": str(e)}
+                continue
             task_results[td.id] = result
             if result.get("status") == "completed":
                 dag.mark_completed(td.id, result)

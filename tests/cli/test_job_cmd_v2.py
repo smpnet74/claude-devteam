@@ -134,3 +134,25 @@ class TestAnswerCommand:
             result = runner.invoke(app, ["answer", "Q-1", "JWT"])
         assert result.exit_code == 0
         assert "already resolved" in result.output
+
+    def test_answer_success(self, runtime_store: RuntimeStateStore) -> None:
+        runtime_store.register_job(workflow_id="uuid-1", project_name="proj", repo_root="/tmp")
+        runtime_store.register_task(
+            alias="T-1", workflow_id="c1", job_alias="W-1", assigned_to="be"
+        )
+        runtime_store.register_question(
+            internal_id="Q-T-1-1",
+            child_workflow_id="child-uuid",
+            task_alias="T-1",
+            text="Redis or JWT?",
+            tier=2,
+        )
+        app = _make_app()
+        with (
+            patch("devteam.cli.commands.job_cmd_v2._get_store", return_value=runtime_store),
+            patch("devteam.cli.commands.job_cmd_v2.asyncio.run") as mock_run,
+        ):
+            result = runner.invoke(app, ["answer", "Q-1", "Use JWT"])
+        assert result.exit_code == 0
+        assert "Answer sent" in result.output
+        mock_run.assert_called_once()
