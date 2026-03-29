@@ -177,7 +177,7 @@ async def bootstrap(
         # Start workflow
         # Note: config is available to the workflow via set_config() singleton, not as a param.
         # DBOS workflow args must be JSON-serializable; DevteamConfig is not.
-        from devteam.orchestrator.workflows import execute_job  # type: ignore[import-not-found]  # created in Task 5
+        from devteam.orchestrator.workflows import execute_job
 
         repo_root = str(Path.cwd())
         project_name = config.general.project_name or Path.cwd().name
