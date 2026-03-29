@@ -94,8 +94,8 @@ async def try_connect_knowledge(
         store = KnowledgeStore(url)
         await store.connect(username=username, password=password)
         return store
-    except Exception as e:
-        logger.warning("Knowledge store unavailable — proceeding without knowledge: %s", e)
+    except Exception:
+        logger.warning("Knowledge store unavailable — proceeding without knowledge")
         return None
 
 
@@ -103,8 +103,8 @@ def try_create_embedder(config: KnowledgeConfig) -> OllamaEmbedder | None:
     """Try to create an Ollama embedder. Returns None on failure."""
     try:
         return create_embedder_from_config(config)
-    except Exception as e:
-        logger.warning("Ollama unavailable — proceeding without embeddings: %s", e)
+    except Exception:
+        logger.warning("Ollama unavailable — proceeding without embeddings")
         return None
 
 
@@ -144,57 +144,60 @@ async def bootstrap(
     DBOS(config={"name": "devteam", "system_database_url": dbos_db_path})
     DBOS.launch()
 
-    # Runtime state (our own SQLite, not DBOS's)
-    if runtime_db_path is None:
-        runtime_db_path = str(devteam_dir / "runtime.sqlite")
-    _runtime_store = RuntimeStateStore(runtime_db_path)
-
-    # V1: single active job
-    check_single_job(_runtime_store)
-
-    # Knowledge (graceful degradation)
-    knowledge_store = await try_connect_knowledge(
-        url=config.knowledge.surrealdb_url,
-        username=config.knowledge.surrealdb_username,
-        password=config.knowledge.surrealdb_password,
-    )
-
-    # Embedder (graceful degradation)
-    _ = try_create_embedder(config.knowledge)  # warm check; embedder used later via knowledge store
-
-    # Agent registry + invoker
-    registry = AgentRegistry.load(get_bundled_templates_dir())
-    invoker = AgentInvoker(registry)
-
-    # Wire singletons
-    set_invoker(invoker)
-    set_knowledge_store(knowledge_store)
-    set_config(config.model_dump())
-
-    # Start workflow
-    from devteam.orchestrator.workflows import execute_job
-
-    repo_root = str(Path.cwd())
-    project_name = config.general.project_name or Path.cwd().name
-
-    handle = await DBOS.start_workflow_async(
-        execute_job,
-        spec=spec,
-        plan=plan,
-        project_name=project_name,
-        repo_root=repo_root,
-    )
-
-    # Register in runtime state (durable alias).
-    # If registration fails, the workflow is already running but untracked.
     try:
+        # Runtime state (our own SQLite, not DBOS's)
+        if runtime_db_path is None:
+            runtime_db_path = str(devteam_dir / "runtime.sqlite")
+        _runtime_store = RuntimeStateStore(runtime_db_path)
+
+        # V1: single active job
+        check_single_job(_runtime_store)
+
+        # Knowledge (graceful degradation)
+        knowledge_store = await try_connect_knowledge(
+            url=config.knowledge.surrealdb_url,
+            username=config.knowledge.surrealdb_username,
+            password=config.knowledge.surrealdb_password,
+        )
+
+        # Embedder (graceful degradation)
+        _ = try_create_embedder(
+            config.knowledge
+        )  # warm check; embedder used later via knowledge store
+
+        # Agent registry + invoker
+        registry = AgentRegistry.load(get_bundled_templates_dir())
+        invoker = AgentInvoker(registry)
+
+        # Wire singletons
+        set_invoker(invoker)
+        set_knowledge_store(knowledge_store)
+        set_config(config.model_dump())
+
+        # Start workflow
+        # Note: config is available to the workflow via set_config() singleton, not as a param.
+        # DBOS workflow args must be JSON-serializable; DevteamConfig is not.
+        from devteam.orchestrator.workflows import execute_job
+
+        repo_root = str(Path.cwd())
+        project_name = config.general.project_name or Path.cwd().name
+
+        handle = await DBOS.start_workflow_async(
+            execute_job,
+            spec=spec,
+            plan=plan,
+            project_name=project_name,
+            repo_root=repo_root,
+        )
+
+        # Register in runtime state (durable alias)
         job_record = _runtime_store.register_job(
             workflow_id=handle.workflow_id,
             project_name=project_name,
             repo_root=repo_root,
         )
-    except Exception as e:
-        logger.error("Failed to register job for workflow %s: %s", handle.workflow_id, e)
-        raise
 
-    return handle, job_record.alias
+        return handle, job_record.alias
+    except Exception:
+        DBOS.destroy()
+        raise
