@@ -108,7 +108,7 @@ async def execute_task(
             # Register question in runtime state
             display = store.register_question(
                 internal_id=f"Q-{td.id}-{question_count}",
-                child_workflow_id=DBOS.workflow_id,
+                child_workflow_id=DBOS.workflow_id or "unknown",
                 task_alias=td.id,
                 text=question_text,
                 tier=2,

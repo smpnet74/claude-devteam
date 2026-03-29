@@ -144,54 +144,60 @@ async def bootstrap(
     DBOS(config={"name": "devteam", "system_database_url": dbos_db_path})
     DBOS.launch()
 
-    # Runtime state (our own SQLite, not DBOS's)
-    if runtime_db_path is None:
-        runtime_db_path = str(devteam_dir / "runtime.sqlite")
-    _runtime_store = RuntimeStateStore(runtime_db_path)
+    try:
+        # Runtime state (our own SQLite, not DBOS's)
+        if runtime_db_path is None:
+            runtime_db_path = str(devteam_dir / "runtime.sqlite")
+        _runtime_store = RuntimeStateStore(runtime_db_path)
 
-    # V1: single active job
-    check_single_job(_runtime_store)
+        # V1: single active job
+        check_single_job(_runtime_store)
 
-    # Knowledge (graceful degradation)
-    knowledge_store = await try_connect_knowledge(
-        url=config.knowledge.surrealdb_url,
-        username=config.knowledge.surrealdb_username,
-        password=config.knowledge.surrealdb_password,
-    )
+        # Knowledge (graceful degradation)
+        knowledge_store = await try_connect_knowledge(
+            url=config.knowledge.surrealdb_url,
+            username=config.knowledge.surrealdb_username,
+            password=config.knowledge.surrealdb_password,
+        )
 
-    # Embedder (graceful degradation)
-    _ = try_create_embedder(config.knowledge)  # warm check; embedder used later via knowledge store
+        # Embedder (graceful degradation)
+        _ = try_create_embedder(
+            config.knowledge
+        )  # warm check; embedder used later via knowledge store
 
-    # Agent registry + invoker
-    registry = AgentRegistry.load(get_bundled_templates_dir())
-    invoker = AgentInvoker(registry)
+        # Agent registry + invoker
+        registry = AgentRegistry.load(get_bundled_templates_dir())
+        invoker = AgentInvoker(registry)
 
-    # Wire singletons
-    set_invoker(invoker)
-    set_knowledge_store(knowledge_store)
-    set_config(config.model_dump())
+        # Wire singletons
+        set_invoker(invoker)
+        set_knowledge_store(knowledge_store)
+        set_config(config.model_dump())
 
-    # Start workflow
-    # Note: config is available to the workflow via set_config() singleton, not as a param.
-    # DBOS workflow args must be JSON-serializable; DevteamConfig is not.
-    from devteam.orchestrator.workflows import execute_job
+        # Start workflow
+        # Note: config is available to the workflow via set_config() singleton, not as a param.
+        # DBOS workflow args must be JSON-serializable; DevteamConfig is not.
+        from devteam.orchestrator.workflows import execute_job
 
-    repo_root = str(Path.cwd())
-    project_name = config.general.project_name or Path.cwd().name
+        repo_root = str(Path.cwd())
+        project_name = config.general.project_name or Path.cwd().name
 
-    handle = await DBOS.start_workflow_async(
-        execute_job,
-        spec=spec,
-        plan=plan,
-        project_name=project_name,
-        repo_root=repo_root,
-    )
+        handle = await DBOS.start_workflow_async(
+            execute_job,
+            spec=spec,
+            plan=plan,
+            project_name=project_name,
+            repo_root=repo_root,
+        )
 
-    # Register in runtime state (durable alias)
-    job_record = _runtime_store.register_job(
-        workflow_id=handle.workflow_id,
-        project_name=project_name,
-        repo_root=repo_root,
-    )
+        # Register in runtime state (durable alias)
+        job_record = _runtime_store.register_job(
+            workflow_id=handle.workflow_id,
+            project_name=project_name,
+            repo_root=repo_root,
+        )
 
-    return handle, job_record.alias
+        return handle, job_record.alias
+    except Exception:
+        DBOS.destroy()
+        raise
