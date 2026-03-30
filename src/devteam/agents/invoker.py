@@ -123,7 +123,9 @@ async def _run_query(prompt: str, options: QueryOptions, timeout: float = 300.0)
             model=options.model or None,
             system_prompt=options.system_prompt or None,
             allowed_tools=options.allowed_tools,
-            permission_mode=options.permission_mode if options.permission_mode != "default" else None,
+            permission_mode=options.permission_mode
+            if options.permission_mode != "default"
+            else None,
             cwd=options.cwd,
             output_format=options.output_format,
         )
