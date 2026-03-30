@@ -98,10 +98,11 @@ class TestStartCommand:
         app = _make_app()
         mock_handle = MagicMock()
         mock_handle.workflow_id = "wf-123"
+        mock_result = {"status": "completed", "route": "small_fix"}
 
         with patch(
             "devteam.cli.commands.job_cmd_v2.asyncio.run",
-            return_value=(mock_handle, "W-1"),
+            return_value=(mock_handle, "W-1", mock_result),
         ):
             result = runner.invoke(app, ["start", "--prompt", "Fix the bug"])
         assert result.exit_code == 0

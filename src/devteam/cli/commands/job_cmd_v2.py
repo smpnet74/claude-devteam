@@ -59,11 +59,26 @@ def register_job_commands_v2(app: typer.Typer) -> None:
             async def _run() -> tuple:
                 from devteam.orchestrator.bootstrap import bootstrap
 
-                return await bootstrap(spec=spec_content, plan=plan_content)
+                handle, alias = await bootstrap(spec=spec_content, plan=plan_content)
+                typer.echo(f"Job {alias} started (workflow: {handle.workflow_id}).")
+                typer.echo("Waiting for workflow to complete...")
+                result = await handle.get_result()
+                return handle, alias, result
 
-            handle, alias = asyncio.run(_run())
-            typer.echo(f"Job {alias} started (workflow: {handle.workflow_id}).")
-            typer.echo("Use 'devteam status' to monitor progress.")
+            handle, alias, result = asyncio.run(_run())
+            typer.echo(f"Job {alias} completed.")
+            if isinstance(result, dict):
+                status = result.get("status", "unknown")
+                route = result.get("route", "")
+                typer.echo(f"  Status: {status}")
+                if route:
+                    typer.echo(f"  Route: {route}")
+                tasks = result.get("tasks", [])
+                for t in tasks:
+                    tid = t.get("task_id", "?")
+                    ts = t.get("status", "?")
+                    pr = t.get("pr_number", "")
+                    typer.echo(f"  {tid}: {ts}" + (f" (PR #{pr})" if pr else ""))
         except Exception as e:
             typer.echo(f"Error: {e}")
             raise typer.Exit(code=1)
